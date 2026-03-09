@@ -1,13 +1,20 @@
 import json
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QPushButton, QLineEdit, QMessageBox, QScrollArea, QWidget, QFrame, QGridLayout)
-from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer, QEvent
+import uuid
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QLineEdit, QMessageBox, QScrollArea, QWidget, QFrame, QGridLayout,
+)
+from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
+from core.config import load_config
+from core.logger import get_logger
 from database.models import PendingInvoice, db
 from core.printer import print_receipt
-from core.config import load_config
 from ui.components.numpad import TouchNumpad
+
+logger = get_logger(__name__)
+
 
 class ClickableLineEdit(QLineEdit):
     clicked = pyqtSignal(object)
@@ -16,30 +23,32 @@ class ClickableLineEdit(QLineEdit):
         super().mousePressEvent(event)
         self.clicked.emit(self)
 
+
 class CheckoutWorker(QThread):
     finished = pyqtSignal(bool, str)
 
-    def __init__(self, invoice_data, payments):
+    def __init__(self, invoice_data: dict, payments: list, offline_id: str):
         super().__init__()
         self.invoice_data = invoice_data
         self.payments = payments
+        self.offline_id = offline_id
         self.api = FrappeAPI()
 
     def run(self):
-        # Step 1: Create Draft POS Invoice via sync_order
-        success, response = self.api.call_method("ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data)
-        
+        success, response = self.api.call_method(
+            "ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data
+        )
+
         if success and isinstance(response, dict):
             if response.get("status") == "Failure":
-                self.save_offline(response)
-                return
-            
-            invoice_name = response.get("name")
-            if not invoice_name:
-                self.save_offline("Chek raqami (invoice name) qaytmadi")
+                self._save_offline(response)
                 return
 
-            # Step 2: Submit the invoice and apply multiple payments via make_invoice
+            invoice_name = response.get("name")
+            if not invoice_name:
+                self._save_offline("Chek raqami (invoice name) qaytmadi")
+                return
+
             payment_payload = {
                 "customer": self.invoice_data.get("customer"),
                 "payments": self.payments,
@@ -48,47 +57,58 @@ class CheckoutWorker(QThread):
                 "owner": self.invoice_data.get("owner"),
                 "additionalDiscount": 0,
                 "table": None,
-                "invoice": invoice_name
+                "invoice": invoice_name,
             }
 
-            submit_success, submit_response = self.api.call_method("ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload)
+            submit_success, submit_response = self.api.call_method(
+                "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
+            )
 
             if submit_success:
+                # To'lov muvaffaqiyatli - _finalize_checkout lokal printerni chaqiradi
                 self.finished.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
             else:
-                self.save_offline(f"To'lovda xatolik (make_invoice): {submit_response}")
+                self._save_offline(f"To'lovda xatolik (make_invoice): {submit_response}")
         else:
-            self.save_offline(response)
+            self._save_offline(response)
 
-    def save_offline(self, error):
+    def _save_offline(self, error):
         try:
             db.connect(reuse_if_open=True)
-            PendingInvoice.create(
-                invoice_data=json.dumps(self.invoice_data),
-                status="Pending",
-                error_message=str(error)
-            )
-            self.finished.emit(False, f"Xato: {error}. Chek oflayn saqlandi!")
+            if not PendingInvoice.select().where(PendingInvoice.offline_id == self.offline_id).exists():
+                # Payments ro'yxatini ham saqlash (offline sync uchun)
+                save_data = dict(self.invoice_data)
+                save_data["_payments"] = self.payments
+                PendingInvoice.create(
+                    offline_id=self.offline_id,
+                    invoice_data=json.dumps(save_data),
+                    status="Pending",
+                    error_message=str(error),
+                )
+            self.finished.emit(False, "Server bilan aloqa yo'qligi sababli chek oflayn saqlandi!")
         except Exception as e:
+            logger.error("Oflayn saqlashda xatolik: %s", e)
             self.finished.emit(False, f"Oflayn saqlashda xatolik: {e}")
         finally:
             if not db.is_closed():
                 db.close()
 
+
 class CheckoutWindow(QDialog):
     checkout_completed = pyqtSignal()
 
-    def __init__(self, parent, order_data):
+    def __init__(self, parent, order_data: dict):
         super().__init__(parent)
         self.order_data = order_data
-        self.total_amount = float(order_data.get('total_amount', 0.0))
-        self.payment_inputs = {} # mode_name: QLineEdit
+        self.total_amount = float(order_data.get("total_amount", 0.0))
+        self.payment_inputs = {}
         self.active_input = None
         self._is_calculating = False
+        self.offline_id = str(uuid.uuid4())
         self.init_ui()
-        QTimer.singleShot(50, self.center_on_parent)
+        QTimer.singleShot(50, self._center_on_parent)
 
-    def center_on_parent(self):
+    def _center_on_parent(self):
         if self.parent():
             p_geo = self.parent().frameGeometry()
             c_geo = self.frameGeometry()
@@ -97,7 +117,7 @@ class CheckoutWindow(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("To'lov")
-        self.setFixedSize(850, 600) # Wider for Numpad
+        self.setFixedSize(850, 600)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
@@ -105,24 +125,23 @@ class CheckoutWindow(QDialog):
         main_h_layout.setContentsMargins(20, 20, 20, 20)
         main_h_layout.setSpacing(20)
 
-        # --- LEFT SIDE: Payment Methods ---
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Total Header
+        # Total box
         total_box = QFrame()
         total_box.setStyleSheet("background-color: #1f2937; border-radius: 10px; padding: 15px;")
         total_layout = QVBoxLayout(total_box)
         lbl_title = QLabel("JAMI SUMMA")
         lbl_title.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: bold;")
         total_layout.addWidget(lbl_title, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.lbl_total = QLabel(f"{self.total_amount:,.0f} UZS".replace(',', ' '))
+        self.lbl_total = QLabel(f"{self.total_amount:,.0f} UZS".replace(",", " "))
         self.lbl_total.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: bold;")
         total_layout.addWidget(self.lbl_total, alignment=Qt.AlignmentFlag.AlignCenter)
         left_layout.addWidget(total_box)
 
-        # Payment Methods List
+        # Payment inputs
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none; background: transparent;")
@@ -132,34 +151,41 @@ class CheckoutWindow(QDialog):
 
         config = load_config()
         payment_methods = config.get("payment_methods", ["Cash"])
+        self.primary_input = None  # Birinchi to'lov usuli (auto-adjust)
 
         for idx, mode in enumerate(payment_methods):
             row = QHBoxLayout()
             lbl = QLabel(mode)
             lbl.setStyleSheet("font-size: 16px; font-weight: 500;")
-            
+
             input_field = ClickableLineEdit()
             input_field.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
             input_field.setPlaceholderText("0")
-            
+
             if idx == 0:
                 input_field.setText(str(int(self.total_amount)))
                 self.active_input = input_field
+                self.primary_input = input_field
                 input_field.setFocus()
-                input_field.setStyleSheet("padding: 10px; font-size: 18px; font-weight: bold; border: 2px solid #3b82f6; border-radius: 6px; background: #eff6ff;")
+                input_field.setStyleSheet(
+                    "padding: 10px; font-size: 18px; font-weight: bold; "
+                    "border: 2px solid #3b82f6; border-radius: 6px; background: #eff6ff;"
+                )
             else:
-                input_field.setStyleSheet("padding: 10px; font-size: 18px; font-weight: bold; border: 1px solid #d1d5db; border-radius: 6px; background: white;")
+                input_field.setStyleSheet(
+                    "padding: 10px; font-size: 18px; font-weight: bold; "
+                    "border: 1px solid #d1d5db; border-radius: 6px; background: white;"
+                )
 
             input_field.setFixedWidth(180)
             input_field.setAlignment(Qt.AlignmentFlag.AlignRight)
-            
-            input_field.clicked.connect(self.set_active_input)
-            input_field.textChanged.connect(self.calculate_remaining)
+            input_field.clicked.connect(self._set_active_input)
+            input_field.textChanged.connect(self._on_payment_changed)
 
             row.addWidget(lbl)
             row.addStretch()
             row.addWidget(input_field)
-            
+
             self.payment_inputs[mode] = input_field
             scroll_layout.addLayout(row)
 
@@ -167,227 +193,235 @@ class CheckoutWindow(QDialog):
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
 
-        # Status Label
-        self.lbl_remaining = QLabel("To'lov summasi to'liq yopildi ✅")
+        # Remaining label
+        self.lbl_remaining = QLabel("To'lov summasi to'liq yopildi")
         self.lbl_remaining.setStyleSheet("font-size: 18px; font-weight: bold; color: #16a34a; padding: 10px;")
         left_layout.addWidget(self.lbl_remaining, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Action Buttons
+        # Buttons
         btn_layout = QHBoxLayout()
         btn_cancel = QPushButton("BEKOR QILISH")
         btn_cancel.setFixedHeight(55)
-        btn_cancel.setStyleSheet("background-color: #f3f4f6; color: #374151; font-weight: bold; border-radius: 10px;")
+        btn_cancel.setStyleSheet(
+            "background-color: #f3f4f6; color: #374151; font-weight: bold; border-radius: 10px;"
+        )
         btn_cancel.clicked.connect(self.reject)
-        
+
         self.btn_confirm = QPushButton("TASDIQLASH")
         self.btn_confirm.setFixedHeight(55)
-        self.btn_confirm.setEnabled(True)
-        self.btn_confirm.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; border-radius: 10px; font-size: 16px;")
-        self.btn_confirm.clicked.connect(self.process_checkout)
-        
+        self.btn_confirm.setStyleSheet(
+            "background-color: #10b981; color: white; font-weight: bold; "
+            "border-radius: 10px; font-size: 16px;"
+        )
+        self.btn_confirm.clicked.connect(self._process_checkout)
+
         btn_layout.addWidget(btn_cancel, 1)
         btn_layout.addWidget(self.btn_confirm, 2)
         left_layout.addLayout(btn_layout)
 
         main_h_layout.addWidget(left_widget, 1)
 
-        # --- RIGHT SIDE: Numpad ---
+        # Numpad
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
-        
         self.numpad = TouchNumpad()
-        self.numpad.digit_clicked.connect(self.on_numpad_clicked)
+        self.numpad.digit_clicked.connect(self._on_numpad_clicked)
         right_layout.addWidget(self.numpad)
-        
-        # Quick amounts
+
         quick_layout = QGridLayout()
-        quick_layout.setSpacing(8)
         amounts = [1000, 5000, 10000, 20000, 50000, 100000, "MAX"]
         r, c = 0, 0
         for amt in amounts:
-            display_text = f"{amt:,}".replace(',', ' ') if isinstance(amt, int) else str(amt)
+            display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else str(amt)
             btn = QPushButton(display_text)
             btn.setFixedSize(100, 50)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f3f4f6;
-                    color: #374151;
-                    font-weight: bold;
-                    font-size: 14px;
-                    border: 1px solid #d1d5db;
-                    border-radius: 8px;
-                }
-                QPushButton:pressed { background-color: #e5e7eb; }
-            """)
+            btn.setStyleSheet("background-color: #f3f4f6; font-weight: bold; border-radius: 8px;")
             if amt == "MAX":
-                btn.clicked.connect(self.fill_max)
-                btn.setStyleSheet("background-color: #3b82f6; color: white; font-weight: bold; border-radius: 8px;")
+                btn.clicked.connect(self._fill_max)
+                btn.setStyleSheet(
+                    "background-color: #3b82f6; color: white; font-weight: bold; border-radius: 8px;"
+                )
             else:
-                btn.clicked.connect(lambda checked, a=amt: self.add_quick_amount(a))
-            
+                btn.clicked.connect(lambda checked, a=amt: self._add_quick_amount(a))
             quick_layout.addWidget(btn, r, c)
             c += 1
             if c > 2:
                 c = 0
                 r += 1
-        
         right_layout.addLayout(quick_layout)
         main_h_layout.addWidget(right_widget)
-        
-        self.calculate_remaining()
+        self._update_remaining_label()
 
-    def set_active_input(self, widget):
-        if self.active_input == widget: return
+    def _set_active_input(self, widget):
         self.active_input = widget
         for inp in self.payment_inputs.values():
-            if inp == widget:
-                inp.setStyleSheet("padding: 10px; font-size: 18px; font-weight: bold; border: 2px solid #3b82f6; border-radius: 6px; background: #eff6ff;")
-            else:
-                inp.setStyleSheet("padding: 10px; font-size: 18px; font-weight: bold; border: 2px solid #d1d5db; border-radius: 6px; background: white;")
+            is_active = inp == widget
+            inp.setStyleSheet(
+                f"padding: 10px; font-size: 18px; font-weight: bold; "
+                f"border: {'2px solid #3b82f6' if is_active else '1px solid #d1d5db'}; "
+                f"border-radius: 6px; background: {'#eff6ff' if is_active else 'white'};"
+            )
         widget.setFocus()
 
-    def on_numpad_clicked(self, action):
-        if not self.active_input: return
-        
-        current_text = self.active_input.text()
-        if action == 'CLEAR':
+    def _on_numpad_clicked(self, action: str):
+        if not self.active_input:
+            return
+        t = self.active_input.text()
+        if action == "CLEAR":
             self.active_input.clear()
-        elif action == 'BACKSPACE':
-            self.active_input.setText(current_text[:-1])
-        elif action == '.':
-            if '.' not in current_text:
-                self.active_input.setText(current_text + '.')
+        elif action == "BACKSPACE":
+            self.active_input.setText(t[:-1])
+        elif action == ".":
+            if "." not in t:
+                self.active_input.setText(t + ".")
         else:
-            self.active_input.setText(current_text + action)
-        
-        self.calculate_remaining()
+            self.active_input.setText(t + action)
 
-    def add_quick_amount(self, amount):
-        if not self.active_input: return
+    def _add_quick_amount(self, amount: int):
+        if not self.active_input:
+            return
         try:
-            current = float(self.active_input.text() or 0)
-            self.active_input.setText(str(int(current + amount)))
-            self.calculate_remaining()
-        except: pass
+            curr = float(self.active_input.text() or 0)
+            self.active_input.setText(str(int(curr + amount)))
+        except ValueError:
+            pass
 
-    def fill_max(self):
-        if not self.active_input: return
-        current_paid_others = 0.0
+    def _fill_max(self):
+        if not self.active_input:
+            return
+        other = 0.0
         for inp in self.payment_inputs.values():
             if inp != self.active_input:
-                try: current_paid_others += float(inp.text() or 0)
-                except: pass
-        
-        needed = max(0, self.total_amount - current_paid_others)
-        self.active_input.setText(str(int(needed)))
-        self.calculate_remaining()
+                try:
+                    other += float(inp.text() or 0)
+                except ValueError:
+                    pass
+        self.active_input.setText(str(int(max(0, self.total_amount - other))))
 
-    def calculate_remaining(self):
+    def _on_payment_changed(self):
         if self._is_calculating:
             return
         self._is_calculating = True
-
         try:
-            payment_methods = list(self.payment_inputs.keys())
-            if not payment_methods: return
-            
-            remainder_field = self.payment_inputs[payment_methods[0]]
-            
-            if self.active_input and self.active_input != remainder_field:
-                other_sum = 0.0
-                for mode, inp in self.payment_inputs.items():
-                    if inp != remainder_field:
-                        try:
-                            val = float(inp.text().replace(' ', '') or 0)
-                            other_sum += val
-                        except: pass
-                
-                new_cash = max(0, self.total_amount - other_sum)
-                remainder_field.setText(str(int(new_cash)))
+            sender = self.sender()
+            # Agar boshqa (ikkinchi) to'lov usuli o'zgarsa — primary ni avtomatik moslashtir
+            if sender is not self.primary_input and self.primary_input:
+                other_total = 0.0
+                for inp in self.payment_inputs.values():
+                    if inp is self.primary_input:
+                        continue
+                    try:
+                        other_total += float(inp.text().replace(" ", "") or 0)
+                    except ValueError:
+                        pass
 
-            total_paid = 0.0
-            for inp in self.payment_inputs.values():
-                try:
-                    total_paid += float(inp.text().replace(' ', '') or 0)
-                except: pass
-            
-            remaining = self.total_amount - total_paid
-            
-            if remaining > 0:
-                self.lbl_remaining.setText(f"Qolgan summa: {remaining:,.0f} UZS".replace(',', ' '))
-                self.lbl_remaining.setStyleSheet("color: #dc2626; font-weight: bold; font-size: 18px;")
-                self.btn_confirm.setEnabled(False)
-                self.btn_confirm.setStyleSheet("background-color: #d1d5db; color: #9ca3af; font-weight: bold; border-radius: 10px;")
-            elif remaining == 0:
-                self.lbl_remaining.setText("To'lov summasi yopildi ✅")
-                self.lbl_remaining.setStyleSheet("color: #16a34a; font-weight: bold; font-size: 18px;")
-                self.btn_confirm.setEnabled(True)
-                self.btn_confirm.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; border-radius: 10px;")
-            else:
-                self.lbl_remaining.setText(f"QAYTIM: {abs(remaining):,.0f} UZS".replace(',', ' '))
-                self.lbl_remaining.setStyleSheet("color: #2563eb; font-weight: bold; font-size: 22px;")
-                self.btn_confirm.setEnabled(True)
-                self.btn_confirm.setStyleSheet("background-color: #10b981; color: white; font-weight: bold; border-radius: 10px;")
+                primary_amount = max(0, self.total_amount - other_total)
+                self.primary_input.blockSignals(True)
+                self.primary_input.setText(str(int(primary_amount)))
+                self.primary_input.blockSignals(False)
+
+            self._update_remaining_label()
         finally:
             self._is_calculating = False
 
-    def process_checkout(self):
+    def _update_remaining_label(self):
+        total_paid = 0.0
+        for inp in self.payment_inputs.values():
+            try:
+                total_paid += float(inp.text().replace(" ", "") or 0)
+            except ValueError:
+                pass
+
+        remaining = self.total_amount - total_paid
+        if remaining > 0:
+            self.lbl_remaining.setText(f"Qolgan summa: {remaining:,.0f} UZS".replace(",", " "))
+            self.lbl_remaining.setStyleSheet("color: #dc2626; font-weight: bold; font-size: 18px;")
+            self.btn_confirm.setEnabled(False)
+        else:
+            if remaining == 0:
+                self.lbl_remaining.setText("To'lov yopildi")
+            else:
+                self.lbl_remaining.setText(f"QAYTIM: {abs(remaining):,.0f} UZS")
+            color = "#16a34a" if remaining == 0 else "#2563eb"
+            self.lbl_remaining.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 18px;")
+            self.btn_confirm.setEnabled(True)
+
+    def _process_checkout(self):
         self.btn_confirm.setEnabled(False)
         self.btn_confirm.setText("Yuborilmoqda...")
 
         payments = []
         for mode, inp in self.payment_inputs.items():
             try:
-                amt = float(inp.text().replace(' ', '') or 0)
+                amt = float(inp.text().replace(" ", "") or 0)
                 if amt > 0:
                     payments.append({"mode_of_payment": mode, "amount": amt})
-            except: pass
+            except ValueError:
+                pass
 
         config = load_config()
+
         payload = {
-            "items": [{"item": str(i['item_code']), "item_name": str(i['name']), "qty": float(i['qty']), "rate": float(i['price']), "comment": ""} for i in self.order_data['items']],
+            "items": [
+                {
+                    "item": str(i["item_code"]),
+                    "item_name": str(i["name"]),
+                    "qty": float(i["qty"]),
+                    "rate": float(i["price"]),
+                    "comment": "",
+                }
+                for i in self.order_data["items"]
+            ],
             "cashier": str(config.get("cashier", "Administrator")),
             "owner": str(config.get("owner", "Administrator")),
-            "mode_of_payment": payments[0]['mode_of_payment'] if payments else "Cash",
-            "customer": str(self.order_data.get('customer', 'guest')),
+            "mode_of_payment": payments[0]["mode_of_payment"] if payments else "Cash",
+            "customer": str(self.order_data.get("customer", "guest")),
             "no_of_pax": 1,
             "last_invoice": "",
-            "waiter": str(config.get("waiter", config.get("cashier", "Administrator"))),
+            "waiter": str(config.get("cashier", "Administrator")),
             "pos_profile": str(config.get("pos_profile", "")),
-            "order_type": str(self.order_data.get('order_type', 'Shu yerda')),
-            "ticket_number": int(self.order_data.get('ticket_number', 0)) if self.order_data.get('ticket_number') else 0,
-            "comments": str(self.order_data.get('comment', '')),
+            "order_type": str(self.order_data.get("order_type", "Shu yerda")),
+            "ticket_number": (
+                int(self.order_data.get("ticket_number", 0))
+                if self.order_data.get("ticket_number")
+                else 0
+            ),
+            "comments": str(self.order_data.get("comment", "")),
             "room": "",
             "aggregator_id": "",
-            "expected_amount": float(self.total_amount)
+            "total_amount": float(self.total_amount),
+            "custom_offline_id": self.offline_id,
         }
 
-        self.worker = CheckoutWorker(payload, payments)
-        self.worker.finished.connect(self.on_worker_finished)
+        self.worker = CheckoutWorker(payload, payments, self.offline_id)
+        self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
 
-    def on_worker_finished(self, success, message):
-        if success:
-            QMessageBox.information(self, "Muvaffaqiyatli", message)
-            
-            # Extract final payments list for the printer
-            final_payments = []
-            for mode, inp in self.payment_inputs.items():
-                try:
-                    amt = float(inp.text().replace(' ', '') or 0)
-                    if amt > 0:
-                        final_payments.append({"mode_of_payment": mode, "amount": amt})
-                except: pass
-
-            # Receipt printing with full payments list breakdown
-            try:
-                print_receipt(self, self.order_data, final_payments)
-            except Exception as e:
-                QMessageBox.warning(self, "Printer Xatosi", f"Chek chiqarishda xatolik: {e}")
-
-            self.checkout_completed.emit()
-            self.accept()
+    def _on_worker_finished(self, success: bool, message: str):
+        if success or "oflayn saqlandi" in message.lower():
+            QMessageBox.information(
+                self, "Muvaffaqiyatli" if success else "Oflayn saqlandi", message
+            )
+            self._finalize_checkout()
         else:
             QMessageBox.warning(self, "Xatolik", message)
             self.btn_confirm.setEnabled(True)
             self.btn_confirm.setText("TASDIQLASH")
+
+    def _finalize_checkout(self):
+        final_payments = []
+        for mode, inp in self.payment_inputs.items():
+            try:
+                amt = float(inp.text().replace(" ", "") or 0)
+                if amt > 0:
+                    final_payments.append({"mode_of_payment": mode, "amount": amt})
+            except ValueError:
+                pass
+
+        try:
+            print_receipt(self, self.order_data, final_payments)
+        except Exception as e:
+            logger.error("Chek chop etishda xatolik: %s", e)
+
+        self.checkout_completed.emit()
+        self.accept()

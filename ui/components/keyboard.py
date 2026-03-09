@@ -4,12 +4,13 @@ from PyQt6.QtCore import pyqtSignal, Qt, QSize
 
 class TouchKeyboard(QDialog):
     text_confirmed = pyqtSignal(str)
+    text_changed = pyqtSignal(str) # Emitted on every key press
 
     def __init__(self, parent=None, initial_text="", title="Matn kiriting", is_numeric=False):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedSize(900, 500) # Slightly wider for full keyboard
-        self.setModal(True)
+        self.setFixedSize(900, 500)
+        self.setModal(False) # Allows interaction with parent (Item Grid)
         self.is_numeric = is_numeric
         self.init_ui(initial_text)
 
@@ -26,6 +27,8 @@ class TouchKeyboard(QDialog):
 
         self.input_field = QLineEdit(initial_text)
         self.input_field.setStyleSheet("border: none; font-size: 26px; font-weight: bold; padding: 10px; color: #1f2937;")
+        # Connect textChanged to our custom signal
+        self.input_field.textChanged.connect(lambda t: self.text_changed.emit(t))
         display_layout.addWidget(self.input_field)
         layout.addWidget(display_frame)
 
@@ -44,13 +47,13 @@ class TouchKeyboard(QDialog):
 
         # 3. Footer Actions
         footer = QHBoxLayout()
-        btn_cancel = QPushButton("BEKOR QILISH")
+        btn_cancel = QPushButton("YOPISH")
         btn_cancel.setFixedHeight(60)
         btn_cancel.setStyleSheet("""
             QPushButton { background-color: #f3f4f6; color: #4b5563; font-weight: bold; border-radius: 10px; border: 1px solid #d1d5db; }
             QPushButton:pressed { background-color: #e5e7eb; }
         """)
-        btn_cancel.clicked.connect(self.reject)
+        btn_cancel.clicked.connect(self.close)
 
         btn_ok = QPushButton("TASDIQLASH (OK)")
         btn_ok.setFixedHeight(60)
@@ -73,7 +76,7 @@ class TouchKeyboard(QDialog):
         ]
         r, c = 0, 0
         for key in keys:
-            btn = self.create_key(key, is_wide=(key == 'CLEAR'))
+            btn = self.create_key(key)
             self.grid.addWidget(btn, r, c)
             c += 1
             if c > 2:
@@ -81,7 +84,6 @@ class TouchKeyboard(QDialog):
                 r += 1
 
     def setup_full_layout(self):
-        # Professional Touch Layout
         rows = [
             ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
             ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '⌫'],
@@ -90,19 +92,14 @@ class TouchKeyboard(QDialog):
         ]
         for r_idx, row in enumerate(rows):
             for c_idx, key in enumerate(row):
-                # Specific logic for wide buttons
                 span = 1
                 if key == 'SPACE': span = 3
                 elif key in ['⌫', 'CLEAR']: span = 2
                 
                 btn = self.create_key(key)
                 self.grid.addWidget(btn, r_idx, c_idx, 1, span)
-                # Adjust column pointer if spanned
-                if span > 1:
-                    # This is simple grid hack, for production we'd track cursor
-                    pass 
 
-    def create_key(self, text, is_wide=False):
+    def create_key(self, text):
         display_text = text
         if text == 'CLEAR': display_text = "TOZALASH"
         elif text == 'SPACE': display_text = "PROBEL"
