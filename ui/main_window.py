@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
         # --- Main Content Splitter ---
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.item_browser = ItemBrowser()
+        self.item_browser = ItemBrowser(self.api)
         self.item_browser.item_selected.connect(self.add_item_to_active_cart)
         splitter.addWidget(self.item_browser)
 
