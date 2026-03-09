@@ -15,6 +15,7 @@ class FrappeAPI:
     def reload_config(self):
         config = load_config()
         self.url = config.get("url", "").rstrip("/")
+        self.site = config.get("site", "")
         self.api_key = config.get("api_key", "")
         self.api_secret = config.get("api_secret", "")
         self.user = config.get("user", "")
@@ -24,7 +25,11 @@ class FrappeAPI:
         headers = {
             "Accept": "application/json",
         }
-        # Prioritize API key if available
+        
+        # Multi-site bench uchun sayt nomini header'da yuboramiz
+        if self.site:
+            headers["X-Frappe-Site-Name"] = self.site
+            
         if self.api_key and self.api_secret:
             headers["Authorization"] = f"token {self.api_key}:{self.api_secret}"
             
@@ -35,25 +40,29 @@ class FrappeAPI:
     def is_configured(self) -> bool:
         return bool(self.url and ((self.api_key and self.api_secret) or (self.user and self.password)))
 
-    def login(self, url: str, usr: str, pwd: str) -> tuple[bool, str]:
+    def login(self, url: str, usr: str, pwd: str, site: str = "") -> tuple[bool, str]:
         """Username va Password orqali login qilish"""
         login_url = f"{url.rstrip('/')}/api/method/login"
         payload = {
             "usr": usr,
             "pwd": pwd
         }
+        headers = {"Accept": "application/json"}
+        if site:
+            headers["X-Frappe-Site-Name"] = site
+
         try:
-            response = self.session.post(login_url, data=payload, timeout=API_TIMEOUT_DEFAULT)
+            response = self.session.post(login_url, data=payload, headers=headers, timeout=API_TIMEOUT_DEFAULT)
             if response.status_code == 200:
                 logger.info("Login muvaffaqiyatli: %s (User: %s)", url, usr)
                 self.url = url.rstrip("/")
                 self.user = usr
                 self.password = pwd
+                self.site = site
                 return True, "Success"
             else:
                 error_msg = "Login yoki parol noto'g'ri"
                 try:
-                    # Some versions return 200 with error message
                     error_data = response.json()
                     if error_data.get("message") == "Logged In":
                         return True, "Success"
@@ -66,16 +75,17 @@ class FrappeAPI:
             return False, "Server bilan aloqa o'rnatib bo'lmadi"
 
     def ping(self, url: str, api_key: str, api_secret: str) -> tuple[bool, str]:
-        """API Key orqali ulanishni tekshirish (eski usul uchun qoldi)"""
         test_url = f"{url.rstrip('/')}/api/method/frappe.auth.get_logged_user"
         headers = {
             "Authorization": f"token {api_key}:{api_secret}",
             "Accept": "application/json",
         }
+        if self.site:
+            headers["X-Frappe-Site-Name"] = self.site
+            
         try:
             response = requests.get(test_url, headers=headers, timeout=API_TIMEOUT_DEFAULT)
             if response.status_code == 200:
-                logger.info("Ping muvaffaqiyatli: %s", url)
                 return True, "Success"
             else:
                 return False, f"Error: {response.status_code}"
@@ -105,9 +115,8 @@ class FrappeAPI:
                 timeout=API_TIMEOUT_SHORT,
             )
             
-            # Re-login if needed
             if response.status_code == 403 and self.user and self.password:
-                if self.login(self.url, self.user, self.password)[0]:
+                if self.login(self.url, self.user, self.password, self.site)[0]:
                     response = self.session.get(
                         endpoint,
                         headers=self.get_headers(is_json=False),
@@ -136,7 +145,7 @@ class FrappeAPI:
                 response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
 
             if response.status_code == 403 and self.user and self.password:
-                if self.login(self.url, self.user, self.password)[0]:
+                if self.login(self.url, self.user, self.password, self.site)[0]:
                     if data is not None:
                         response = self.session.post(endpoint, headers=headers, json=data, timeout=API_TIMEOUT_DEFAULT)
                     else:

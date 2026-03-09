@@ -9,7 +9,6 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
 
-# Load .env file if exists
 load_dotenv(ENV_FILE)
 
 
@@ -24,6 +23,7 @@ def load_config() -> dict:
 
     # Defaults and Env overrides
     config["url"] = os.getenv("FRAPPE_URL", config.get("url", "https://jazira.erpcontrol.uz/")).rstrip("/")
+    config["site"] = os.getenv("FRAPPE_SITE", config.get("site", ""))
     config["api_key"] = os.getenv("FRAPPE_API_KEY", config.get("api_key", ""))
     config["api_secret"] = os.getenv("FRAPPE_API_SECRET", config.get("api_secret", ""))
     config["user"] = os.getenv("FRAPPE_USER", config.get("user", ""))
@@ -34,12 +34,10 @@ def load_config() -> dict:
 
 def save_config(data: dict):
     config = load_config()
-    # Never save credentials to config.json
     sensitive_keys = {"api_key", "api_secret", "user", "password"}
     clean_data = {k: v for k, v in data.items() if k not in sensitive_keys}
     config.update(clean_data)
 
-    # Remove credentials from file if present
     for key in sensitive_keys:
         config.pop(key, None)
 
@@ -50,20 +48,21 @@ def save_config(data: dict):
         logger.error("config.json yozishda ruxsat yo'q")
 
 
-def save_credentials(url: str, user: str, password: str):
+def save_credentials(url: str, user: str, password: str, site: str = ""):
     env_lines = [
         f"FRAPPE_URL={url}\n",
         f"FRAPPE_USER={user}\n",
         f"FRAPPE_PASSWORD={password}\n",
+        f"FRAPPE_SITE={site}\n",
     ]
     try:
         with open(ENV_FILE, "w") as f:
             f.writelines(env_lines)
-        # Reload environment
         load_dotenv(ENV_FILE, override=True)
         logger.info("Credentials .env fayliga saqlandi")
     except PermissionError:
         logger.error(".env fayliga yozishda ruxsat yo'q")
+
 
 def clear_credentials():
     if os.path.exists(ENV_FILE):
@@ -76,5 +75,6 @@ def clear_credentials():
     os.environ.pop("FRAPPE_URL", None)
     os.environ.pop("FRAPPE_USER", None)
     os.environ.pop("FRAPPE_PASSWORD", None)
+    os.environ.pop("FRAPPE_SITE", None)
     os.environ.pop("FRAPPE_API_KEY", None)
     os.environ.pop("FRAPPE_API_SECRET", None)

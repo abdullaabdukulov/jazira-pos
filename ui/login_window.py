@@ -17,41 +17,50 @@ class LoginWindow(QWidget):
 
     def init_ui(self):
         self.setWindowTitle("Ury POS - Cashier Login")
-        self.setFixedSize(400, 380)
+        self.setFixedSize(500, 450) # Window kengaytirildi
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(30, 30, 30, 30)
+        layout.setContentsMargins(40, 40, 40, 40)
         layout.setSpacing(15)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.title_label = QLabel("Kassir kirishi")
-        self.title_label.setStyleSheet("font-size: 22px; font-weight: bold; margin-bottom: 10px;")
+        self.title_label.setStyleSheet("font-size: 26px; font-weight: bold; margin-bottom: 10px;")
         layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         config = load_config()
-        default_url = config.get("url", "https://jazira.erpcontrol.uz/")
+        default_url = config.get("url", "http://192.168.1.53:8000")
+        default_site = config.get("site", "jazira.local")
 
         # Server URL
+        layout.addWidget(QLabel("Server manzili (masalan: http://192.168.1.53:8000):"))
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://example.frappe.cloud")
+        self.url_input.setPlaceholderText("http://192.168.1.53:8000")
         self.url_input.setText(default_url)
-        self.url_input.setStyleSheet("padding: 10px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 5px;")
-        layout.addWidget(QLabel("Server manzili:"))
+        self.url_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
         layout.addWidget(self.url_input)
 
+        # Site Name (X-Frappe-Site-Name uchun)
+        layout.addWidget(QLabel("Sayt nomi (Multi-site uchun):"))
+        self.site_input = QLineEdit()
+        self.site_input.setPlaceholderText("jazira.local")
+        self.site_input.setText(default_site)
+        self.site_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
+        layout.addWidget(self.site_input)
+
         # User Login
+        layout.addWidget(QLabel("Kassir logini (Email):"))
         self.user_input = QLineEdit()
-        self.user_input.setPlaceholderText("Email yoki Login")
-        self.user_input.setStyleSheet("padding: 10px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 5px;")
-        layout.addWidget(QLabel("Kassir logini:"))
+        self.user_input.setPlaceholderText("kassa@jazira.uz")
+        self.user_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
         layout.addWidget(self.user_input)
 
         # Password
+        layout.addWidget(QLabel("Parol:"))
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Parol")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setStyleSheet("padding: 10px; font-size: 14px; border: 1px solid #d1d5db; border-radius: 5px;")
-        layout.addWidget(QLabel("Parol:"))
+        self.password_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
         layout.addWidget(self.password_input)
 
         # Login Button
@@ -59,8 +68,9 @@ class LoginWindow(QWidget):
         self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_btn.setStyleSheet("""
             QPushButton {
-                padding: 12px; background-color: #2563eb; color: white; 
-                font-weight: bold; border-radius: 5px; font-size: 14px;
+                padding: 15px; background-color: #2563eb; color: white; 
+                font-weight: bold; border-radius: 5px; font-size: 16px;
+                margin-top: 10px;
             }
             QPushButton:hover { background-color: #1d4ed8; }
             QPushButton:disabled { background-color: #94a3b8; }
@@ -72,6 +82,7 @@ class LoginWindow(QWidget):
 
     def handle_login(self):
         url = self.url_input.text().strip()
+        site = self.site_input.text().strip()
         user = self.user_input.text().strip()
         password = self.password_input.text().strip()
 
@@ -81,39 +92,21 @@ class LoginWindow(QWidget):
 
         # URL validation
         if not url.startswith("http"):
-            url = "https://" + url
+            url = "http://" + url
 
         self.login_btn.setText("Kirilmoqda...")
         self.login_btn.setEnabled(False)
 
-        # Attempt session-based login
-        success, message = self.api.login(url, user, password)
+        # Attempt login with Site Name
+        success, message = self.api.login(url, user, password, site)
 
         if success:
-            # Login successful. Attempt to fetch API Key for extra reliability (optional)
-            api_key = ""
-            try:
-                # Get current logged user name
-                s, current_user = self.api.call_method("frappe.auth.get_logged_user")
-                if s:
-                    # Get user document to see if api_key exists
-                    s2, user_doc = self.api.call_method("frappe.client.get", {"doctype": "User", "name": current_user})
-                    if s2 and isinstance(user_doc, dict):
-                        api_key = user_doc.get("api_key", "")
-            except Exception as e:
-                logger.debug("Optional API key fetch failed: %s", e)
-
-            # Persist credentials
-            save_credentials(url, user, password)
-            if api_key:
-                # If we found an API key, we can append it to .env or handle it via save_credentials update
-                # For now, session + user/pass is enough.
-                pass
-
-            save_config({"url": url})
+            # Persist credentials including site
+            save_credentials(url, user, password, site)
+            save_config({"url": url, "site": site})
             self.api.reload_config()
             
-            logger.info("Login muvaffaqiyatli: %s (%s)", url, user)
+            logger.info("Login muvaffaqiyatli: %s (Site: %s, User: %s)", url, site, user)
             self.login_successful.emit()
             self.close()
         else:
