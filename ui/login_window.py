@@ -17,7 +17,7 @@ class LoginWindow(QWidget):
 
     def init_ui(self):
         self.setWindowTitle("Ury POS - Cashier Login")
-        self.setFixedSize(500, 450) # Window kengaytirildi
+        self.setFixedSize(500, 550) # Bo'yi biroz uzaytirildi
 
         layout = QVBoxLayout()
         layout.setContentsMargins(40, 40, 40, 40)
@@ -25,42 +25,65 @@ class LoginWindow(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.title_label = QLabel("Kassir kirishi")
-        self.title_label.setStyleSheet("font-size: 26px; font-weight: bold; margin-bottom: 10px;")
+        self.title_label.setStyleSheet("font-size: 28px; font-weight: bold; margin-bottom: 20px; color: #1e293b;")
         layout.addWidget(self.title_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         config = load_config()
         default_url = config.get("url", "http://192.168.1.53:8000")
         default_site = config.get("site", "jazira.local")
 
+        # Style for all inputs
+        input_style = """
+            QLineEdit {
+                padding: 15px; 
+                font-size: 16px; 
+                border: 2px solid #d1d5db; 
+                border-radius: 8px;
+                background: #ffffff;
+                min-height: 25px;
+            }
+            QLineEdit:focus {
+                border: 2px solid #3b82f6;
+            }
+        """
+
         # Server URL
-        layout.addWidget(QLabel("Server manzili (masalan: http://192.168.1.53:8000):"))
+        lbl1 = QLabel("Server manzili:")
+        lbl1.setStyleSheet("font-weight: bold; color: #475569;")
+        layout.addWidget(lbl1)
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("http://192.168.1.53:8000")
         self.url_input.setText(default_url)
-        self.url_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
+        self.url_input.setStyleSheet(input_style)
         layout.addWidget(self.url_input)
 
-        # Site Name (X-Frappe-Site-Name uchun)
-        layout.addWidget(QLabel("Sayt nomi (Multi-site uchun):"))
+        # Site Name
+        lbl2 = QLabel("Sayt nomi:")
+        lbl2.setStyleSheet("font-weight: bold; color: #475569;")
+        layout.addWidget(lbl2)
         self.site_input = QLineEdit()
         self.site_input.setPlaceholderText("jazira.local")
         self.site_input.setText(default_site)
-        self.site_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
+        self.site_input.setStyleSheet(input_style)
         layout.addWidget(self.site_input)
 
         # User Login
-        layout.addWidget(QLabel("Kassir logini (Email):"))
+        lbl3 = QLabel("Kassir logini (Email):")
+        lbl3.setStyleSheet("font-weight: bold; color: #475569;")
+        layout.addWidget(lbl3)
         self.user_input = QLineEdit()
-        self.user_input.setPlaceholderText("kassa@jazira.uz")
-        self.user_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
+        self.user_input.setPlaceholderText("login@example.uz")
+        self.user_input.setStyleSheet(input_style)
         layout.addWidget(self.user_input)
 
         # Password
-        layout.addWidget(QLabel("Parol:"))
+        lbl4 = QLabel("Parol:")
+        lbl4.setStyleSheet("font-weight: bold; color: #475569;")
+        layout.addWidget(lbl4)
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Parol")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setStyleSheet("padding: 12px; font-size: 16px; border: 1px solid #d1d5db; border-radius: 5px;")
+        self.password_input.setStyleSheet(input_style)
         layout.addWidget(self.password_input)
 
         # Login Button
@@ -68,9 +91,13 @@ class LoginWindow(QWidget):
         self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_btn.setStyleSheet("""
             QPushButton {
-                padding: 15px; background-color: #2563eb; color: white; 
-                font-weight: bold; border-radius: 5px; font-size: 16px;
-                margin-top: 10px;
+                padding: 18px; 
+                background-color: #2563eb; 
+                color: white; 
+                font-weight: bold; 
+                border-radius: 8px; 
+                font-size: 18px;
+                margin-top: 20px;
             }
             QPushButton:hover { background-color: #1d4ed8; }
             QPushButton:disabled { background-color: #94a3b8; }
@@ -90,22 +117,18 @@ class LoginWindow(QWidget):
             QMessageBox.warning(self, "Xatolik", "Barcha maydonlarni to'ldiring!")
             return
 
-        # URL validation
         if not url.startswith("http"):
             url = "http://" + url
 
         self.login_btn.setText("Kirilmoqda...")
         self.login_btn.setEnabled(False)
 
-        # Attempt login with Site Name
         success, message = self.api.login(url, user, password, site)
 
         if success:
-            # Persist credentials including site
             save_credentials(url, user, password, site)
             save_config({"url": url, "site": site})
             self.api.reload_config()
-            
             logger.info("Login muvaffaqiyatli: %s (Site: %s, User: %s)", url, site, user)
             self.login_successful.emit()
             self.close()
