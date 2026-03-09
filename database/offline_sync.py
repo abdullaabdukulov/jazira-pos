@@ -12,9 +12,9 @@ logger = get_logger(__name__)
 class OfflineSyncWorker(QThread):
     sync_status = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI):
         super().__init__()
-        self.api = FrappeAPI()
+        self.api = api
         self.running = True
 
     def run(self):

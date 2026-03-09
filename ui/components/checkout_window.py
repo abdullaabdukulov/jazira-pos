@@ -27,14 +27,15 @@ class ClickableLineEdit(QLineEdit):
 class CheckoutWorker(QThread):
     finished = pyqtSignal(bool, str)
 
-    def __init__(self, invoice_data: dict, payments: list, offline_id: str):
+    def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI):
         super().__init__()
         self.invoice_data = invoice_data
         self.payments = payments
         self.offline_id = offline_id
-        self.api = FrappeAPI()
+        self.api = api
 
     def run(self):
+        # Shared API orqali chaqiriladi
         success, response = self.api.call_method(
             "ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data
         )
@@ -65,7 +66,6 @@ class CheckoutWorker(QThread):
             )
 
             if submit_success:
-                # To'lov muvaffaqiyatli - _finalize_checkout lokal printerni chaqiradi
                 self.finished.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
             else:
                 self._save_offline(f"To'lovda xatolik (make_invoice): {submit_response}")
@@ -76,7 +76,6 @@ class CheckoutWorker(QThread):
         try:
             db.connect(reuse_if_open=True)
             if not PendingInvoice.select().where(PendingInvoice.offline_id == self.offline_id).exists():
-                # Payments ro'yxatini ham saqlash (offline sync uchun)
                 save_data = dict(self.invoice_data)
                 save_data["_payments"] = self.payments
                 PendingInvoice.create(
@@ -97,8 +96,9 @@ class CheckoutWorker(QThread):
 class CheckoutWindow(QDialog):
     checkout_completed = pyqtSignal()
 
-    def __init__(self, parent, order_data: dict):
+    def __init__(self, parent, order_data: dict, api: FrappeAPI):
         super().__init__(parent)
+        self.api = api
         self.order_data = order_data
         self.total_amount = float(order_data.get("total_amount", 0.0))
         self.payment_inputs = {}
@@ -151,7 +151,7 @@ class CheckoutWindow(QDialog):
 
         config = load_config()
         payment_methods = config.get("payment_methods", ["Cash"])
-        self.primary_input = None  # Birinchi to'lov usuli (auto-adjust)
+        self.primary_input = None
 
         for idx, mode in enumerate(payment_methods):
             row = QHBoxLayout()
@@ -304,7 +304,6 @@ class CheckoutWindow(QDialog):
         self._is_calculating = True
         try:
             sender = self.sender()
-            # Agar boshqa (ikkinchi) to'lov usuli o'zgarsa — primary ni avtomatik moslashtir
             if sender is not self.primary_input and self.primary_input:
                 other_total = 0.0
                 for inp in self.payment_inputs.values():
@@ -393,7 +392,7 @@ class CheckoutWindow(QDialog):
             "custom_offline_id": self.offline_id,
         }
 
-        self.worker = CheckoutWorker(payload, payments, self.offline_id)
+        self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
         self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
 

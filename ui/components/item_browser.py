@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QPixmap, QImage
 from database.models import Item, ItemPrice, db
-from core.config import load_config
+from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import ITEM_LOAD_LIMIT, ITEM_GRID_COLUMNS, IMAGE_TIMEOUT
 from ui.components.keyboard import TouchKeyboard
@@ -15,12 +15,13 @@ logger = get_logger(__name__)
 
 
 class ItemButton(QPushButton):
-    def __init__(self, item_code, item_name, price, currency, image_url=None, parent=None):
+    def __init__(self, item_code, item_name, price, currency, image_url=None, api=None, parent=None):
         super().__init__(parent)
         self.item_code = item_code
         self.item_name = item_name
         self.price = price
         self.currency = currency
+        self.api = api
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -66,13 +67,15 @@ class ItemButton(QPushButton):
         """)
 
     def _load_image(self, url: str):
-        config = load_config()
-        base_url = config.get("url", "").rstrip("/")
+        if not self.api:
+            return
+            
+        base_url = self.api.url
         full_url = url if url.startswith("http") else f"{base_url}{url}"
 
         try:
-            headers = {"Authorization": f"token {config.get('api_key')}:{config.get('api_secret')}"}
-            response = requests.get(full_url, headers=headers, timeout=IMAGE_TIMEOUT)
+            # Use shared session for image loading
+            response = self.api.session.get(full_url, timeout=IMAGE_TIMEOUT)
             if response.status_code == 200:
                 image = QImage()
                 image.loadFromData(response.content)
@@ -80,15 +83,17 @@ class ItemButton(QPushButton):
                 self.image_label.setPixmap(
                     pixmap.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 )
-        except requests.exceptions.RequestException:
+        except Exception as e:
+            logger.debug("Image load error: %s", e)
             self.image_label.setText("--")
 
 
 class ItemBrowser(QWidget):
     item_selected = pyqtSignal(str, str, float, str)
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI):
         super().__init__()
+        self.api = api
         self.current_category = None
         self.kb = None
         self.init_ui()
@@ -242,7 +247,8 @@ class ItemBrowser(QWidget):
                 currency = price_record.currency if price_record else "UZS"
 
                 btn = ItemButton(
-                    item_row.item_code, item_row.item_name, price, currency, image_url=item_row.image
+                    item_row.item_code, item_row.item_name, price, currency, 
+                    image_url=item_row.image, api=self.api
                 )
                 btn.clicked.connect(
                     lambda checked, c=item_row.item_code, n=item_row.item_name, p=price, cur=currency:

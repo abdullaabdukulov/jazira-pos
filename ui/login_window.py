@@ -10,9 +10,9 @@ logger = get_logger(__name__)
 class LoginWindow(QWidget):
     login_successful = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI):
         super().__init__()
-        self.api = FrappeAPI()
+        self.api = api
         self.init_ui()
 
     def init_ui(self):

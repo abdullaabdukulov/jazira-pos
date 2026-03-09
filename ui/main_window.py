@@ -22,8 +22,9 @@ logger = get_logger(__name__)
 class MainWindow(QMainWindow):
     logout_requested = pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI):
         super().__init__()
+        self.api = api
         self.setWindowTitle("Jazira POS")
         self.showMaximized()
 
@@ -145,12 +146,12 @@ class MainWindow(QMainWindow):
         # Initial Sale Tab
         self.add_new_sale_tab()
 
-        # Workers
-        self.sync_worker = SyncWorker()
+        # Workers - Shared API beriladi
+        self.sync_worker = SyncWorker(self.api)
         self.sync_worker.progress_update.connect(self.update_status)
         self.sync_worker.sync_finished.connect(self.on_sync_finished)
 
-        self.offline_sync_worker = OfflineSyncWorker()
+        self.offline_sync_worker = OfflineSyncWorker(self.api)
         self.offline_sync_worker.sync_status.connect(self.update_status)
         self.offline_sync_worker.start()
 
@@ -184,10 +185,9 @@ class MainWindow(QMainWindow):
 
     def _check_server_status(self):
         try:
-            api = FrappeAPI()
-            # Try to fetch something lightweight to check connectivity
-            response = api.call_method("frappe.auth.get_logged_user")
-            self._update_connectivity_ui(response[0])
+            # Shared API orqali tekshiriladi
+            success, _ = self.api.call_method("frappe.auth.get_logged_user")
+            self._update_connectivity_ui(success)
         except Exception:
             self._update_connectivity_ui(False)
 
@@ -256,7 +256,8 @@ class MainWindow(QMainWindow):
             active_cart.add_item(item_code, item_name, price, currency)
 
     def on_checkout(self, order_data: dict):
-        dialog = CheckoutWindow(self, order_data)
+        # CheckoutWindow ham shared API ishlatadi
+        dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)
         dialog.exec()
 
@@ -270,12 +271,9 @@ class MainWindow(QMainWindow):
         HistoryWindow(self).exec()
 
     def start_sync(self):
-        try:
-            api = FrappeAPI()
-            success, _ = api.call_method("frappe.auth.get_logged_user")
-            if not success:
-                raise ConnectionError("Server unreachable")
-        except Exception:
+        # Connectivity check shared API bilan
+        success, _ = self.api.call_method("frappe.auth.get_logged_user")
+        if not success:
             QMessageBox.warning(
                 self, "Internet yo'q",
                 "Hozirda server bilan aloqa mavjud emas.\n"

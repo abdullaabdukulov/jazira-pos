@@ -13,9 +13,9 @@ class SyncWorker(QThread):
     progress_update = pyqtSignal(str)
     sync_finished = pyqtSignal(bool, str)
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI):
         super().__init__()
-        self.api = FrappeAPI()
+        self.api = api
 
     def run(self):
         try:

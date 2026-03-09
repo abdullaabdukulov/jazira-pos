@@ -19,9 +19,9 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(GLOBAL_STYLE)
 
-    api = FrappeAPI()
+    # Bitta shared API instance yaratamiz
+    shared_api = FrappeAPI()
 
-    # We use a list to hold window references so we can recreate them
     windows = {"main": None, "login": None}
 
     def show_login():
@@ -29,7 +29,8 @@ def main():
             windows["main"].close()
             windows["main"] = None
         
-        windows["login"] = LoginWindow()
+        # API instance'ni Login oynasiga beramiz
+        windows["login"] = LoginWindow(shared_api)
         windows["login"].login_successful.connect(show_main)
         windows["login"].show()
 
@@ -38,18 +39,18 @@ def main():
             windows["login"].close()
             windows["login"] = None
             
-        windows["main"] = MainWindow()
+        # API instance'ni Asosiy oynaga beramiz
+        windows["main"] = MainWindow(shared_api)
         windows["main"].logout_requested.connect(handle_logout)
         windows["main"].show()
 
     def handle_logout():
         logger.info("Foydalanuvchi tizimdan chiqdi")
         clear_credentials()
-        # Reset API configuration state
-        api.reload_config()
+        shared_api.reload_config()
         show_login()
 
-    if api.is_configured():
+    if shared_api.is_configured():
         show_main()
     else:
         show_login()
