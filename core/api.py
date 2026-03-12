@@ -1,4 +1,5 @@
 import json
+import threading
 import requests
 from core.config import load_config
 from core.logger import get_logger
@@ -10,6 +11,7 @@ logger = get_logger(__name__)
 class FrappeAPI:
     def __init__(self):
         self.session = requests.Session()
+        self._lock = threading.Lock()
         self.reload_config()
 
     def reload_config(self):
@@ -66,7 +68,7 @@ class FrappeAPI:
                     error_data = response.json()
                     if error_data.get("message") == "Logged In":
                         return True, "Success"
-                except:
+                except (json.JSONDecodeError, ValueError):
                     pass
                 logger.warning("Login xatosi: %d - %s", response.status_code, response.text[:200])
                 return False, error_msg
@@ -108,25 +110,26 @@ class FrappeAPI:
                 params["filters"] = filters
 
         try:
-            response = self.session.get(
-                endpoint,
-                headers=self.get_headers(is_json=False),
-                params=params,
-                timeout=API_TIMEOUT_SHORT,
-            )
-            
-            if response.status_code == 403 and self.user and self.password:
-                if self.login(self.url, self.user, self.password, self.site)[0]:
-                    response = self.session.get(
-                        endpoint,
-                        headers=self.get_headers(is_json=False),
-                        params=params,
-                        timeout=API_TIMEOUT_SHORT,
-                    )
+            with self._lock:
+                response = self.session.get(
+                    endpoint,
+                    headers=self.get_headers(is_json=False),
+                    params=params,
+                    timeout=API_TIMEOUT_SHORT,
+                )
+                
+                if response.status_code == 403 and self.user and self.password:
+                    if self.login(self.url, self.user, self.password, self.site)[0]:
+                        response = self.session.get(
+                            endpoint,
+                            headers=self.get_headers(is_json=False),
+                            params=params,
+                            timeout=API_TIMEOUT_SHORT,
+                        )
 
-            if response.status_code == 200:
-                return response.json().get("data", [])
-            return None
+                if response.status_code == 200:
+                    return response.json().get("data", [])
+                return None
         except Exception as e:
             logger.error("fetch_data %s xatosi: %s", doctype, e)
             return None
@@ -139,22 +142,23 @@ class FrappeAPI:
         try:
             headers = self.get_headers(is_json=True)
 
-            if data is not None:
-                response = self.session.post(endpoint, headers=headers, json=data, timeout=API_TIMEOUT_DEFAULT)
-            else:
-                response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
+            with self._lock:
+                if data is not None:
+                    response = self.session.post(endpoint, headers=headers, json=data, timeout=API_TIMEOUT_DEFAULT)
+                else:
+                    response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
 
-            if response.status_code == 403 and self.user and self.password:
-                if self.login(self.url, self.user, self.password, self.site)[0]:
-                    if data is not None:
-                        response = self.session.post(endpoint, headers=headers, json=data, timeout=API_TIMEOUT_DEFAULT)
-                    else:
-                        response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
+                if response.status_code == 403 and self.user and self.password:
+                    if self.login(self.url, self.user, self.password, self.site)[0]:
+                        if data is not None:
+                            response = self.session.post(endpoint, headers=headers, json=data, timeout=API_TIMEOUT_DEFAULT)
+                        else:
+                            response = self.session.get(endpoint, headers=headers, timeout=API_TIMEOUT_DEFAULT)
 
-            if response.status_code == 200:
-                return True, response.json().get("message", response.json())
-            else:
-                return False, f"Server xatosi ({response.status_code})"
+                if response.status_code == 200:
+                    return True, response.json().get("message", response.json())
+                else:
+                    return False, f"Server xatosi ({response.status_code})"
         except Exception as e:
             logger.error("call_method %s xatosi: %s", method, e)
             return False, str(e)

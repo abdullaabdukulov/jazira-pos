@@ -1,10 +1,10 @@
-import json
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config, save_config
 from core.logger import get_logger
 from core.constants import CUSTOMER_SYNC_LIMIT, DEFAULT_CURRENCY, DEFAULT_CUSTOMER, DEFAULT_UOM
 from database.models import Item, Customer, ItemPrice, PendingInvoice, db
+from database.invoice_processor import process_pending_invoice
 
 logger = get_logger(__name__)
 
@@ -25,6 +25,7 @@ class SyncWorker(QThread):
             self._sync_pending_invoices()
             logged_user = self._get_logged_user()
             self._sync_pos_profile(logged_user)
+            self._sync_production_units()
             self._sync_items()
             self._sync_customers()
 
@@ -46,34 +47,10 @@ class SyncWorker(QThread):
         count = pending.count()
         for i, inv in enumerate(pending):
             self.progress_update.emit(f"Oflayn chek yuborilmoqda: {i + 1}/{count}")
-            try:
-                payload = json.loads(inv.invoice_data)
-                # To'lovlarni ajratib olish (sync_order ga yubormaslik kerak)
-                saved_payments = payload.pop("_payments", None)
-                self._ensure_mandatory_fields(payload)
-
-                success, response = self.api.call_method(
-                    "ury.ury.doctype.ury_order.ury_order.sync_order", payload
-                )
-
-                if success and isinstance(response, dict) and response.get("status") != "Failure":
-                    invoice_name = response.get("name")
-                    # make_invoice chaqirish (to'lovlar bilan)
-                    if invoice_name and saved_payments:
-                        self._submit_invoice(payload, invoice_name, saved_payments)
-                    inv.status = "Synced"
-                    inv.error_message = "Muvaffaqiyatli"
-                    inv.save()
-                else:
-                    error_str = str(response)
-                    inv.error_message = error_str
-                    if self._is_permanent_error(error_str):
-                        inv.status = "Failed"
-                    inv.save()
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error("Chek #%d JSON xatosi: %s", inv.id, e)
-            except Exception as e:
-                logger.error("Chek #%d sinxronizatsiya xatosi: %s", inv.id, e)
+            status, message = process_pending_invoice(self.api, inv)
+            inv.status = status
+            inv.error_message = message
+            inv.save()
 
     def _get_logged_user(self) -> str:
         self.progress_update.emit("Foydalanuvchi ma'lumotlari olinmoqda...")
@@ -127,6 +104,21 @@ class SyncWorker(QThread):
         if not items:
             return
 
+        # Har bir item uchun item_group ni olish (batch)
+        item_codes = [it.get("item") for it in items if it.get("item")]
+        item_groups_map = {}
+        if item_codes:
+            success_ig, ig_data = self.api.call_method(
+                "frappe.client.get_list", {
+                    "doctype": "Item",
+                    "filters": {"name": ["in", item_codes]},
+                    "fields": ["name", "item_group"],
+                    "limit_page_length": len(item_codes),
+                }
+            )
+            if success_ig and isinstance(ig_data, list):
+                item_groups_map = {d["name"]: d.get("item_group", "") for d in ig_data}
+
         with db.atomic():
             Item.delete().execute()
             ItemPrice.delete().execute()
@@ -136,7 +128,7 @@ class SyncWorker(QThread):
                 Item.insert(
                     item_code=item_code,
                     item_name=item_data.get("item_name"),
-                    item_group=item_data.get("course") or "Barchasi",
+                    item_group=item_groups_map.get(item_code, ""),
                     image=item_data.get("item_image"),
                     uom=DEFAULT_UOM,
                 ).on_conflict_replace().execute()
@@ -169,74 +161,61 @@ class SyncWorker(QThread):
 
         logger.info("%d ta mijoz sinxronizatsiya qilindi", len(customers))
 
-    def _submit_invoice(self, payload: dict, invoice_name: str, payments: list):
-        """sync_order dan keyin make_invoice chaqirish va chop etish"""
-        try:
-            payment_payload = {
-                "customer": payload.get("customer"),
-                "payments": payments,
-                "cashier": payload.get("cashier"),
-                "pos_profile": payload.get("pos_profile"),
-                "owner": payload.get("owner"),
-                "additionalDiscount": 0,
-                "table": None,
-                "invoice": invoice_name,
-            }
-            success, response = self.api.call_method(
-                "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
+    def _sync_production_units(self):
+        """Serverdan production unitlarni sinxronizatsiya qilish.
+
+        Har bir unit o'z item_groups va printer sozlamalariga ega.
+        Lokal printer_device sozlamalari saqlanadi.
+        """
+        config = load_config()
+        pos_profile = config.get("pos_profile")
+        if not pos_profile:
+            logger.warning("POS profile topilmadi — production unit sinx o'tkazib yuborildi")
+            return
+
+        self.progress_update.emit("Production unitlar yuklanmoqda...")
+
+        success, units = self.api.call_method("frappe.client.get_list", {
+            "doctype": "URY Production Unit",
+            "filters": {"pos_profile": pos_profile},
+            "fields": ["name", "production"],
+            "limit_page_length": 50,
+        })
+
+        if not success or not isinstance(units, list):
+            logger.warning("Production unitlarni olib bo'lmadi")
+            return
+
+        if not units:
+            logger.info("Bu filialda production unit yo'q")
+            return
+
+        # Mavjud lokal printer_device mappingni saqlash
+        existing = config.get("production_units", [])
+        existing_devices = {u.get("name", ""): u.get("printer_device", "") for u in existing}
+
+        production_units = []
+        for unit in units:
+            unit_name = unit.get("production", unit.get("name", ""))
+
+            # Har bir unit uchun item_groups olish
+            success2, unit_doc = self.api.call_method(
+                "frappe.client.get",
+                {"doctype": "URY Production Unit", "name": unit["name"]}
             )
-            if success:
-                logger.info("make_invoice muvaffaqiyatli: %s", invoice_name)
-                # Lokal printer orqali chop etish
-                self._print_invoice(invoice_name, payload, payments)
-            else:
-                logger.error("make_invoice xatosi (%s): %s", invoice_name, response)
-        except Exception as e:
-            logger.error("make_invoice chaqiruvida xatolik (%s): %s", invoice_name, e)
+            item_groups = []
+            if success2 and isinstance(unit_doc, dict):
+                item_groups = [
+                    ig.get("item_group", "")
+                    for ig in unit_doc.get("item_groups", [])
+                    if ig.get("item_group")
+                ]
 
-    def _print_invoice(self, invoice_name: str, payload: dict, payments: list):
-        """Lokal printer orqali chop etish"""
-        try:
-            from core.printer import print_receipt
-            
-            order_data = payload.copy()
-            total_amount = sum(float(item.get("qty", 0)) * float(item.get("rate", 0)) for item in payload.get("items", []))
-            order_data["total_amount"] = total_amount
-            
-            success = print_receipt(None, order_data, payments)
-            if success:
-                logger.info("Invoice %s lokal printer orqali chop etildi", invoice_name)
-            else:
-                logger.warning("Invoice %s lokal print qilinmadi", invoice_name)
-        except Exception as e:
-            logger.error("Lokal print xatosi: %s", e)
+            production_units.append({
+                "name": unit_name,
+                "item_groups": item_groups,
+                "printer_device": existing_devices.get(unit_name, ""),
+            })
 
-    @staticmethod
-    def _is_permanent_error(error_msg: str) -> bool:
-        permanent_keywords = [
-            "validationerror",
-            "permissionerror",
-            "doesnotexisterror",
-            "mandatoryerror",
-            "invalidcolumnname",
-            "server xatosi (417)",
-            "server xatosi (403)",
-            "server xatosi (404)",
-        ]
-        msg_lower = error_msg.lower()
-        return any(kw in msg_lower for kw in permanent_keywords)
-
-    @staticmethod
-    def _ensure_mandatory_fields(payload: dict):
-        defaults = {
-            "mode_of_payment": "Cash",
-            "no_of_pax": 1,
-            "last_invoice": "",
-            "waiter": payload.get("cashier") or "Administrator",
-            "room": "",
-            "aggregator_id": "",
-            "items": [],
-        }
-        for field, default in defaults.items():
-            if field not in payload:
-                payload[field] = default
+        save_config({"production_units": production_units})
+        logger.info("%d ta production unit sinxronizatsiya qilindi", len(production_units))

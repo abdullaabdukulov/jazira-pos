@@ -1,0 +1,28 @@
+{
+    "_comment": "Bu fayl namuna. Haqiqiy config.json ga nusxa olib, printer sozlamalarini to'g'rilang.",
+    "_note": "pos_profile, company, cashier, currency kabi sozlamalar sinxronizatsiya vaqtida serverdan avtomatik olinadi.",
+
+    "printers": [
+        {
+            "_comment": "Mijozga beriladigan chek printeri",
+            "name": "Mijoz",
+            "type": "customer",
+            "device": "/dev/usb/lp0",
+            "win_name": "XP-365B"
+        },
+        {
+            "_comment": "Oshxona uchun printer (ixtiyoriy)",
+            "name": "Oshxona",
+            "type": "kitchen",
+            "device": "/dev/usb/lp1",
+            "win_name": "Kitchen Printer"
+        },
+        {
+            "_comment": "Barista uchun printer (ixtiyoriy)",
+            "name": "Barista",
+            "type": "bar",
+            "device": "/dev/usb/lp2",
+            "win_name": "Bar Printer"
+        }
+    ]
+}

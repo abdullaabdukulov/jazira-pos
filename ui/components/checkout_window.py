@@ -117,37 +117,50 @@ class CheckoutWindow(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("To'lov")
-        self.setFixedSize(850, 600)
+        self.setFixedSize(880, 620)
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet("background: white;")
 
         main_h_layout = QHBoxLayout(self)
         main_h_layout.setContentsMargins(20, 20, 20, 20)
         main_h_layout.setSpacing(20)
 
+        # ── LEFT PANEL ───────────────────────────────────────
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
 
-        # Total box
-        total_box = QFrame()
-        total_box.setStyleSheet("background-color: #1f2937; border-radius: 10px; padding: 15px;")
-        total_layout = QVBoxLayout(total_box)
+        # Total card — dark (original)
+        total_card = QFrame()
+        total_card.setStyleSheet("background-color: #1f2937; border-radius: 10px; padding: 15px;")
+        total_layout = QVBoxLayout(total_card)
+
         lbl_title = QLabel("JAMI SUMMA")
         lbl_title.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: bold;")
-        total_layout.addWidget(lbl_title, alignment=Qt.AlignmentFlag.AlignCenter)
+        lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        total_layout.addWidget(lbl_title)
+
         self.lbl_total = QLabel(f"{self.total_amount:,.0f} UZS".replace(",", " "))
         self.lbl_total.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: bold;")
-        total_layout.addWidget(self.lbl_total, alignment=Qt.AlignmentFlag.AlignCenter)
-        left_layout.addWidget(total_box)
+        self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        total_layout.addWidget(self.lbl_total)
+        left_layout.addWidget(total_card)
 
         # Payment inputs
+        pay_label = QLabel("TO'LOV TURLARI")
+        pay_label.setStyleSheet(
+            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
+        )
+        left_layout.addWidget(pay_label)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border: none; background: transparent;")
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(10)
+        scroll_layout.setSpacing(8)
 
         config = load_config()
         payment_methods = config.get("payment_methods", ["Cash"])
@@ -156,7 +169,7 @@ class CheckoutWindow(QDialog):
         for idx, mode in enumerate(payment_methods):
             row = QHBoxLayout()
             lbl = QLabel(mode)
-            lbl.setStyleSheet("font-size: 16px; font-weight: 500;")
+            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #334155;")
 
             input_field = ClickableLineEdit()
             input_field.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
@@ -168,16 +181,17 @@ class CheckoutWindow(QDialog):
                 self.primary_input = input_field
                 input_field.setFocus()
                 input_field.setStyleSheet(
-                    "padding: 10px; font-size: 18px; font-weight: bold; "
-                    "border: 2px solid #3b82f6; border-radius: 6px; background: #eff6ff;"
+                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
+                    "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
                 )
             else:
                 input_field.setStyleSheet(
-                    "padding: 10px; font-size: 18px; font-weight: bold; "
-                    "border: 1px solid #d1d5db; border-radius: 6px; background: white;"
+                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
+                    "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
                 )
 
-            input_field.setFixedWidth(180)
+            input_field.setFixedWidth(190)
+            input_field.setFixedHeight(48)
             input_field.setAlignment(Qt.AlignmentFlag.AlignRight)
             input_field.clicked.connect(self._set_active_input)
             input_field.textChanged.connect(self._on_payment_changed)
@@ -195,24 +209,35 @@ class CheckoutWindow(QDialog):
 
         # Remaining label
         self.lbl_remaining = QLabel("To'lov summasi to'liq yopildi")
-        self.lbl_remaining.setStyleSheet("font-size: 18px; font-weight: bold; color: #16a34a; padding: 10px;")
-        left_layout.addWidget(self.lbl_remaining, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Buttons
-        btn_layout = QHBoxLayout()
-        btn_cancel = QPushButton("BEKOR QILISH")
-        btn_cancel.setFixedHeight(55)
-        btn_cancel.setStyleSheet(
-            "background-color: #f3f4f6; color: #374151; font-weight: bold; border-radius: 10px;"
+        self.lbl_remaining.setStyleSheet(
+            "font-size: 16px; font-weight: 700; color: #16a34a; padding: 6px;"
         )
+        self.lbl_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left_layout.addWidget(self.lbl_remaining)
+
+        # Action buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+
+        btn_cancel = QPushButton("Bekor")
+        btn_cancel.setFixedHeight(52)
+        btn_cancel.setStyleSheet("""
+            QPushButton { background: #f1f5f9; color: #64748b;
+                font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
+            QPushButton:hover { background: #e2e8f0; }
+        """)
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_confirm = QPushButton("TASDIQLASH")
-        self.btn_confirm.setFixedHeight(55)
-        self.btn_confirm.setStyleSheet(
-            "background-color: #10b981; color: white; font-weight: bold; "
-            "border-radius: 10px; font-size: 16px;"
-        )
+        self.btn_confirm = QPushButton("✓  TO'LOV QILISH")
+        self.btn_confirm.setFixedHeight(52)
+        self.btn_confirm.setStyleSheet("""
+            QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #22c55e, stop:1 #16a34a);
+                color: white; font-weight: 800; font-size: 15px;
+                border-radius: 12px; border: none; }
+            QPushButton:hover { background: #15803d; }
+            QPushButton:disabled { background: #d1fae5; color: #86efac; }
+        """)
         self.btn_confirm.clicked.connect(self._process_checkout)
 
         btn_layout.addWidget(btn_cancel, 1)
@@ -221,27 +246,54 @@ class CheckoutWindow(QDialog):
 
         main_h_layout.addWidget(left_widget, 1)
 
-        # Numpad
+        # ── RIGHT PANEL — Numpad + Quick amounts ─────────────
         right_widget = QWidget()
+        right_widget.setStyleSheet("""
+            background: #f8fafc; border-radius: 14px;
+        """)
         right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(12, 12, 12, 12)
+        right_layout.setSpacing(10)
+
+        numpad_lbl = QLabel("MIQDOR KIRITING")
+        numpad_lbl.setStyleSheet(
+            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
+        )
+        right_layout.addWidget(numpad_lbl)
+
         self.numpad = TouchNumpad()
         self.numpad.digit_clicked.connect(self._on_numpad_clicked)
         right_layout.addWidget(self.numpad)
 
+        # Quick amounts
+        quick_lbl = QLabel("TEZKOR SUMMA")
+        quick_lbl.setStyleSheet(
+            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
+        )
+        right_layout.addWidget(quick_lbl)
+
         quick_layout = QGridLayout()
+        quick_layout.setSpacing(6)
         amounts = [1000, 5000, 10000, 20000, 50000, 100000, "MAX"]
         r, c = 0, 0
         for amt in amounts:
-            display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else str(amt)
+            display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else "MAX"
             btn = QPushButton(display_text)
-            btn.setFixedSize(100, 50)
-            btn.setStyleSheet("background-color: #f3f4f6; font-weight: bold; border-radius: 8px;")
+            btn.setFixedSize(100, 42)
             if amt == "MAX":
+                btn.setStyleSheet("""
+                    QPushButton { background: #3b82f6; color: white;
+                        font-weight: 700; font-size: 13px; border-radius: 8px; border: none; }
+                    QPushButton:hover { background: #2563eb; }
+                """)
                 btn.clicked.connect(self._fill_max)
-                btn.setStyleSheet(
-                    "background-color: #3b82f6; color: white; font-weight: bold; border-radius: 8px;"
-                )
             else:
+                btn.setStyleSheet("""
+                    QPushButton { background: white; color: #334155;
+                        font-weight: 600; font-size: 12px;
+                        border-radius: 8px; border: 1px solid #e2e8f0; }
+                    QPushButton:hover { background: #f1f5f9; }
+                """)
                 btn.clicked.connect(lambda checked, a=amt: self._add_quick_amount(a))
             quick_layout.addWidget(btn, r, c)
             c += 1
@@ -257,9 +309,9 @@ class CheckoutWindow(QDialog):
         for inp in self.payment_inputs.values():
             is_active = inp == widget
             inp.setStyleSheet(
-                f"padding: 10px; font-size: 18px; font-weight: bold; "
-                f"border: {'2px solid #3b82f6' if is_active else '1px solid #d1d5db'}; "
-                f"border-radius: 6px; background: {'#eff6ff' if is_active else 'white'};"
+                f"padding: 10px 14px; font-size: 18px; font-weight: 700; color: #1e293b; "
+                f"border: {'2px solid #3b82f6' if is_active else '1.5px solid #e2e8f0'}; "
+                f"border-radius: 10px; background: {'#eff6ff' if is_active else 'white'};"
             )
         widget.setFocus()
 
@@ -377,7 +429,7 @@ class CheckoutWindow(QDialog):
             "customer": str(self.order_data.get("customer", "guest")),
             "no_of_pax": 1,
             "last_invoice": "",
-            "waiter": str(config.get("cashier", "Administrator")),
+            "waiter": str(config.get("cashier", "Administrator")),  # server API talab qiladi
             "pos_profile": str(config.get("pos_profile", "")),
             "order_type": str(self.order_data.get("order_type", "Shu yerda")),
             "ticket_number": (
@@ -397,15 +449,51 @@ class CheckoutWindow(QDialog):
         self.worker.start()
 
     def _on_worker_finished(self, success: bool, message: str):
+        from PyQt6.QtWidgets import QDialog as _QD, QVBoxLayout as _VL, QHBoxLayout as _HL, QLabel as _Lbl, QPushButton as _Btn, QFrame as _Fr
         if success or "oflayn saqlandi" in message.lower():
-            QMessageBox.information(
-                self, "Muvaffaqiyatli" if success else "Oflayn saqlandi", message
-            )
+            kind = "success" if success else "warning"
+            icons = {"success": "✓", "warning": "⚠️"}
+            colors = {"success": "#16a34a", "warning": "#d97706"}
+            bgs = {"success": "#f0fdf4", "warning": "#fffbeb"}
+            borders = {"success": "#bbf7d0", "warning": "#fde68a"}
+            d = _QD(self)
+            d.setFixedWidth(380)
+            d.setStyleSheet("background: white;")
+            lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
+            top = _HL()
+            ic = _Lbl(icons[kind])
+            ic.setStyleSheet(f"font-size:26px; background:{bgs[kind]}; border:1.5px solid {borders[kind]}; border-radius:10px; padding:6px 12px;")
+            top.addWidget(ic)
+            ttl = _Lbl("Muvaffaqiyatli" if success else "Oflayn saqlandi")
+            ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{colors[kind]};")
+            top.addWidget(ttl, 1); lay.addLayout(top)
+            sep = _Fr(); sep.setFrameShape(_Fr.Shape.HLine); sep.setStyleSheet("background:#f1f5f9; max-height:1px;"); lay.addWidget(sep)
+            msg = _Lbl(message); msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
+            ok = _Btn("OK"); ok.setFixedHeight(42)
+            ok.setStyleSheet(f"QPushButton{{background:{colors[kind]};color:white;font-weight:700;border-radius:10px;border:none;}} QPushButton:hover{{opacity:0.9;}}")
+            ok.clicked.connect(d.accept); lay.addWidget(ok)
+            d.exec()
             self._finalize_checkout()
         else:
-            QMessageBox.warning(self, "Xatolik", message)
+            d = _QD(self)
+            d.setFixedWidth(360)
+            d.setStyleSheet("background: white;")
+            lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
+            top = _HL()
+            ic = _Lbl("✕")
+            ic.setStyleSheet("font-size:26px; background:#fef2f2; border:1.5px solid #fecaca; border-radius:10px; padding:6px 12px;")
+            top.addWidget(ic)
+            ttl = _Lbl("Xatolik")
+            ttl.setStyleSheet("font-size:16px; font-weight:800; color:#dc2626;")
+            top.addWidget(ttl, 1); lay.addLayout(top)
+            sep = _Fr(); sep.setFrameShape(_Fr.Shape.HLine); sep.setStyleSheet("background:#f1f5f9; max-height:1px;"); lay.addWidget(sep)
+            msg = _Lbl(message); msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
+            ok = _Btn("OK"); ok.setFixedHeight(42)
+            ok.setStyleSheet("QPushButton{background:#dc2626;color:white;font-weight:700;border-radius:10px;border:none;}")
+            ok.clicked.connect(d.accept); lay.addWidget(ok)
+            d.exec()
             self.btn_confirm.setEnabled(True)
-            self.btn_confirm.setText("TASDIQLASH")
+            self.btn_confirm.setText("✓  TO'LOV QILISH")
 
     def _finalize_checkout(self):
         final_payments = []
@@ -418,7 +506,10 @@ class CheckoutWindow(QDialog):
                 pass
 
         try:
-            print_receipt(self, self.order_data, final_payments)
+            results = print_receipt(self, self.order_data, final_payments)
+            failed = [k for k, v in results.items() if not v]
+            if failed:
+                logger.warning("Printerlar chop etilmadi: %s", ", ".join(failed))
         except Exception as e:
             logger.error("Chek chop etishda xatolik: %s", e)
 
