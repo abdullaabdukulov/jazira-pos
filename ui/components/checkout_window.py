@@ -510,8 +510,29 @@ class CheckoutWindow(QDialog):
             failed = [k for k, v in results.items() if not v]
             if failed:
                 logger.warning("Printerlar chop etilmadi: %s", ", ".join(failed))
+                self._show_printer_warning(failed)
         except Exception as e:
             logger.error("Chek chop etishda xatolik: %s", e)
 
         self.checkout_completed.emit()
         self.accept()
+
+    def _show_printer_warning(self, failed_printers: list):
+        """Printer xatosi haqida foydalanuvchiga ogohlantirish"""
+        from PyQt6.QtWidgets import QDialog as _QD, QVBoxLayout as _VL, QLabel as _Lbl, QPushButton as _Btn
+        names = ", ".join(failed_printers)
+        d = _QD(self)
+        d.setFixedWidth(360)
+        d.setStyleSheet("background: white;")
+        lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
+        ic = _Lbl("⚠️"); ic.setStyleSheet("font-size:32px;"); ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(ic)
+        ttl = _Lbl("Printer xatosi")
+        ttl.setStyleSheet("font-size:16px; font-weight:800; color:#d97706;")
+        ttl.setAlignment(Qt.AlignmentFlag.AlignCenter); lay.addWidget(ttl)
+        msg = _Lbl(f"Quyidagi printerlar chop etilmadi:\n{names}\n\nBuyurtma saqlandi.")
+        msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
+        ok = _Btn("OK"); ok.setFixedHeight(42)
+        ok.setStyleSheet("QPushButton{background:#d97706;color:white;font-weight:700;border-radius:10px;border:none;}")
+        ok.clicked.connect(d.accept); lay.addWidget(ok)
+        d.exec()

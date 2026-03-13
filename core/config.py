@@ -36,29 +36,30 @@ def load_config() -> dict:
 
 
 def save_config(data: dict):
-    config = {}
-    if os.path.exists(CONFIG_FILE):
+    with _config_lock:
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, "r") as f:
+                    config = json.load(f)
+            except (json.JSONDecodeError, PermissionError):
+                pass
+
+        # config.json ga yozilmasligi kerak bo'lgan kalitlar
+        # url, site, user, password, api_key, api_secret → .env da saqlanadi
+        excluded_keys = {"url", "site", "user", "password", "api_key", "api_secret"}
+        clean_data = {k: v for k, v in data.items() if k not in excluded_keys}
+        config.update(clean_data)
+
+        # Eski qoldiqlarni tozalash
+        for key in excluded_keys:
+            config.pop(key, None)
+
         try:
-            with open(CONFIG_FILE, "r") as f:
-                config = json.load(f)
-        except (json.JSONDecodeError, PermissionError):
-            pass
-
-    # config.json ga yozilmasligi kerak bo'lgan kalitlar
-    # url, site, user, password, api_key, api_secret → .env da saqlanadi
-    excluded_keys = {"url", "site", "user", "password", "api_key", "api_secret"}
-    clean_data = {k: v for k, v in data.items() if k not in excluded_keys}
-    config.update(clean_data)
-
-    # Eski qoldiqlarni tozalash
-    for key in excluded_keys:
-        config.pop(key, None)
-
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config, f, indent=4, ensure_ascii=False)
-    except PermissionError:
-        logger.error("config.json yozishda ruxsat yo'q")
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=4, ensure_ascii=False)
+        except PermissionError:
+            logger.error("config.json yozishda ruxsat yo'q")
 
 
 

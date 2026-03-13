@@ -1,8 +1,10 @@
 import os
 import platform
+import threading
 from datetime import datetime
 from core.logger import get_logger
 from core.config import load_config
+from database.models import Item, db
 
 logger = get_logger(__name__)
 
@@ -21,33 +23,28 @@ CMD_FONT_B = ESC + b'\x4d\x01'
 CMD_FONT_A = ESC + b'\x4d\x00'
 CMD_CUT = GS + b'\x56\x41\x03'
 CMD_FEED = ESC + b'\x64\x04'
-CMD_OPEN_DRAWER = ESC + b'\x70\x00\x19\xfa'  # Cash drawer ochish
+CMD_OPEN_DRAWER = ESC + b'\x70\x00\x19\xfa'
 
 CHARS_PER_LINE = 48
+CHARS_DOUBLE = 24  # CMD_DOUBLE_ON da 2x kenglik → yarmi sig'adi
+PRINTER_TIMEOUT = 3.0
+
+ORDER_TYPE_LABELS = {
+    "Shu yerda": "Xarid cheki",
+    "Saboy": "Olib ketish cheki",
+    "Dastavka": "Dastavka cheki",
+    "Dastavka Saboy": "Dastavka cheki",
+}
 
 
 # ──────────────────────────────────────────────────
 #  Printer ro'yxatini config'dan yuklash
 # ──────────────────────────────────────────────────
 def get_printers() -> list[dict]:
-    """Config'dan printerlar ro'yxatini qaytaradi.
-
-    config.json misol:
-    {
-      "printers": [
-        {"name": "Mijoz",   "device": "/dev/usb/lp0", "type": "customer"},
-        {"name": "Oshxona", "device": "/dev/usb/lp1", "type": "kitchen"},
-        {"name": "Barista", "device": "/dev/usb/lp2", "type": "bar"}
-      ]
-    }
-
-    Agar printers bo'lmasa, standart 1 ta printer qaytariladi.
-    """
     config = load_config()
     printers = config.get("printers", None)
 
     if not printers:
-        # Backward-compatible: eski config uchun bitta printer
         device = config.get("printer_device", "/dev/usb/lp0")
         win_name = config.get("printer_name", "XP-365B")
         return [{"name": "Mijoz", "device": device, "type": "customer", "win_name": win_name}]
@@ -56,12 +53,10 @@ def get_printers() -> list[dict]:
 
 
 def get_printers_by_type(printer_type: str) -> list[dict]:
-    """Turi bo'yicha printerlarni qaytaradi (customer/kitchen/bar)"""
     return [p for p in get_printers() if p.get("type") == printer_type]
 
 
 def is_printer_available(device: str) -> bool:
-    """Printer ulangan/mavjudligini tekshiradi"""
     if platform.system() == "Windows":
         try:
             import win32print
@@ -83,10 +78,10 @@ def _encode(text: str) -> bytes:
         return text.encode("utf-8", errors="replace")
 
 
-def _line(left: str, right: str = "", fill: str = " ") -> bytes:
+def _line(left: str, right: str = "", fill: str = " ", width: int = CHARS_PER_LINE) -> bytes:
     if not right:
-        return _encode(left + "\n")
-    space = CHARS_PER_LINE - len(left) - len(right)
+        return _encode(left[:width] + "\n")
+    space = width - len(left) - len(right)
     if space < 1:
         space = 1
     return _encode(left + fill * space + right + "\n")
@@ -96,26 +91,30 @@ def _center_text(text: str) -> bytes:
     return CMD_ALIGN_CENTER + _encode(text + "\n") + CMD_ALIGN_LEFT
 
 
-def _separator(char: str = "-") -> bytes:
-    return _encode(char * CHARS_PER_LINE + "\n")
+def _separator(char: str = "-", width: int = CHARS_PER_LINE) -> bytes:
+    return _encode(char * width + "\n")
 
 
 def _format_amount(amount) -> str:
     return f"{float(amount):,.0f}"
 
 
+def _order_type_label(order_type: str) -> str:
+    return ORDER_TYPE_LABELS.get(order_type, "Chek")
+
+
 # ──────────────────────────────────────────────────
 #  Chek ma'lumotlarini yaratish
 # ──────────────────────────────────────────────────
-def _build_customer_receipt(order_data: dict, payments_list: list) -> bytes:
-    """Mijoz uchun to'liq chek (narxlar, to'lov, qaytim)"""
+def _build_customer_receipt(order_data: dict, payments_list: list, config: dict) -> bytes:
+    """Mijoz uchun to'liq chek — turiga qarab sarlavha o'zgaradi"""
     items_list = order_data.get("items", [])
     total_amount = order_data.get("total_amount", 0.0)
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
+    customer = order_data.get("customer", "")
 
-    config = load_config()
     company = config.get("company", "JAZIRA POS")
 
     total_paid = sum(float(p.get("amount", 0)) for p in payments_list)
@@ -125,17 +124,21 @@ def _build_customer_receipt(order_data: dict, payments_list: list) -> bytes:
     data = bytearray()
     data += CMD_INIT
 
-    # Sarlavha
+    # Sarlavha — turiga qarab
     data += CMD_ALIGN_CENTER
     data += CMD_BOLD_ON + CMD_DOUBLE_ON
     data += _encode(company + "\n")
     data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode("Xarid cheki\n")
+    data += _encode(_order_type_label(order_type) + "\n")
     data += _encode(date_str + "\n")
-    data += CMD_BOLD_ON
-    data += _encode(f"Tur: {order_type}\n")
-    data += CMD_BOLD_OFF
     data += CMD_ALIGN_LEFT
+
+    # Dastavka → mijoz nomi
+    if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
+        data += _separator()
+        data += CMD_BOLD_ON
+        data += _line("Mijoz:", customer)
+        data += CMD_BOLD_OFF
 
     # Stiker raqami
     if ticket_number:
@@ -171,7 +174,7 @@ def _build_customer_receipt(order_data: dict, payments_list: list) -> bytes:
     # Jami
     data += _separator("=")
     data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _line("JAMI:", f"{_format_amount(total_amount)} UZS")
+    data += _line("JAMI:", f"{_format_amount(total_amount)} UZS", width=CHARS_DOUBLE)
     data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
     data += _separator("=")
 
@@ -204,41 +207,56 @@ def _build_customer_receipt(order_data: dict, payments_list: list) -> bytes:
     return bytes(data)
 
 
-def _build_kitchen_receipt(order_data: dict, printer_type: str = "kitchen") -> bytes:
-    """Oshxona/Barista uchun chek — faqat buyurtma tafsilotlari, narxsiz"""
-    items_list = order_data.get("items", [])
+def _build_production_receipt(order_data: dict, unit_items: list, unit_name: str) -> bytes:
+    """Production unit uchun chek — turiga qarab format o'zgaradi"""
     order_type = order_data.get("order_type", "")
     ticket_number = order_data.get("ticket_number", "")
     comment = order_data.get("comment", "")
+    customer = order_data.get("customer", "")
     date_str = datetime.now().strftime("%H:%M:%S")
-
-    label = "OSHXONA" if printer_type == "kitchen" else "BAR"
 
     data = bytearray()
     data += CMD_INIT
 
-    # Sarlavha
+    # Sarlavha — unit nomi katta
     data += CMD_ALIGN_CENTER + CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode(f"--- {label} ---\n")
+    data += _encode(f"--- {unit_name} ---\n")
     data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode(f"{date_str}  |  {order_type}\n")
 
-    # Stiker
+    # Buyurtma turi + vaqt
+    data += CMD_ALIGN_CENTER
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    data += _encode(f"{order_type}\n")
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+    data += _encode(date_str + "\n")
+
+    # Stiker — eng muhim qism
     if ticket_number:
+        data += _encode("\n")
         data += CMD_BOLD_ON + CMD_DOUBLE_ON
-        data += _encode(f"STIKER: {ticket_number}\n")
+        data += _encode(f"# {ticket_number}\n")
         data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+
+    # Dastavka → mijoz nomi
+    if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
+        data += CMD_BOLD_ON
+        data += _encode(f"Mijoz: {customer}\n")
+        data += CMD_BOLD_OFF
 
     data += CMD_ALIGN_LEFT
     data += _separator("=")
 
-    # Tovarlar — faqat nom va miqdor
-    for item in items_list:
+    # Tovarlar — katta shrift, faqat nom va miqdor
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    for item in unit_items:
         name = item.get("name", item.get("item_name", ""))
         qty = int(item.get("qty", 0))
-        data += CMD_BOLD_ON
-        data += _line(name, f"x{qty}")
-        data += CMD_BOLD_OFF
+        right = f"x{qty}"
+        # DOUBLE_ON = 24 belgi sig'adi
+        if len(name) + len(right) + 1 > CHARS_DOUBLE:
+            name = name[:CHARS_DOUBLE - len(right) - 1]
+        data += _line(name, right, width=CHARS_DOUBLE)
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
 
     data += _separator("=")
 
@@ -254,25 +272,64 @@ def _build_kitchen_receipt(order_data: dict, printer_type: str = "kitchen") -> b
     return bytes(data)
 
 
+def _get_item_groups_map(items: list) -> dict:
+    """Lokal DB dan itemlarning item_group ini oladi."""
+    item_codes = [
+        item.get("item_code", item.get("item", ""))
+        for item in items
+        if item.get("item_code") or item.get("item")
+    ]
+    if not item_codes:
+        return {}
+
+    try:
+        db.connect(reuse_if_open=True)
+        rows = Item.select(Item.item_code, Item.item_group).where(
+            Item.item_code.in_(item_codes)
+        )
+        return {row.item_code: row.item_group or "" for row in rows}
+    except Exception as e:
+        logger.error("Item group olishda xatolik: %s", e)
+        return {}
+
+
 # ──────────────────────────────────────────────────
-#  Printerga yuborish
+#  Printerga yuborish (timeout bilan)
 # ──────────────────────────────────────────────────
 def _send_to_device(data: bytes, device: str) -> bool:
-    """Ma'lumotni printerga yuborish (Linux USB)"""
-    try:
-        if not os.path.exists(device):
-            logger.warning("Printer topilmadi: %s", device)
-            return False
-        with open(device, "wb") as printer:
-            printer.write(data)
-            printer.flush()
-        return True
-    except PermissionError:
-        logger.error("Printer ruxsati yo'q: %s (sudo usermod -aG lp $USER)", device)
+    """Ma'lumotni printerga yuborish (Linux USB) — timeout bilan"""
+    if not os.path.exists(device):
+        logger.warning("Printer topilmadi: %s", device)
         return False
-    except Exception as e:
-        logger.error("Printer xatosi (%s): %s", device, e)
+
+    result = [False]
+    error = [None]
+
+    def _write():
+        try:
+            with open(device, "wb") as printer:
+                printer.write(data)
+                printer.flush()
+            result[0] = True
+        except Exception as e:
+            error[0] = e
+
+    t = threading.Thread(target=_write, daemon=True)
+    t.start()
+    t.join(timeout=PRINTER_TIMEOUT)
+
+    if t.is_alive():
+        logger.error("Printer timeout (%.0f sek): %s", PRINTER_TIMEOUT, device)
         return False
+
+    if error[0]:
+        if isinstance(error[0], PermissionError):
+            logger.error("Printer ruxsati yo'q: %s (sudo usermod -aG lp $USER)", device)
+        else:
+            logger.error("Printer xatosi (%s): %s", device, error[0])
+        return False
+
+    return result[0]
 
 
 def _send_win32(data: bytes, printer_name: str) -> bool:
@@ -315,35 +372,80 @@ def _send_data(data: bytes, printer_config: dict) -> bool:
 def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
     """Barcha sozlangan printerlarga chek yuborish.
 
-    Qaytaradi: {"customer": True/False, "kitchen": True/False, "bar": True/False}
+    1. Mijoz cheki — barcha itemlar + narxlar (customer printer)
+    2. Production unit cheklari — har bir unit uchun faqat o'z item_group itemlari
+
+    Qaytaradi: {"customer": True/False, "Unit nomi": True/False, ...}
     """
     results = {}
-    printers = get_printers()
+    config = load_config()
 
-    for p_config in printers:
-        p_type = p_config.get("type", "customer")
-        p_name = p_config.get("name", p_type)
-
+    # 1. Mijoz cheki (customer printer) — doim
+    customer_printers = get_printers_by_type("customer")
+    if customer_printers:
         try:
-            if p_type == "customer":
-                receipt_data = _build_customer_receipt(order_data, payments_list)
-            elif p_type in ("kitchen", "bar"):
-                receipt_data = _build_kitchen_receipt(order_data, printer_type=p_type)
+            receipt_data = _build_customer_receipt(order_data, payments_list, config)
+            success = _send_data(receipt_data, customer_printers[0])
+            results["customer"] = success
+            if success:
+                logger.info("Mijoz cheki chop etildi")
             else:
-                logger.warning("Noma'lum printer turi: %s (%s)", p_type, p_name)
+                logger.warning("Mijoz cheki chop etilmadi")
+        except Exception as e:
+            logger.error("Mijoz printer xatosi: %s", e)
+            results["customer"] = False
+    else:
+        logger.warning("Mijoz printeri sozlanmagan")
+
+    # 2. Production unit cheklari
+    prod_units = config.get("production_units", [])
+    if not prod_units:
+        return results
+
+    # Item → item_group mapping (lokal DB) — 1 marta query
+    items_list = order_data.get("items", [])
+    item_groups_map = _get_item_groups_map(items_list)
+
+    for unit in prod_units:
+        unit_name = unit.get("name", "")
+        device = unit.get("printer_device", "")
+        win_name = unit.get("printer_win_name", "")
+
+        # Platformaga qarab printer sozlanganligini tekshirish
+        if platform.system() == "Windows":
+            if not win_name:
+                logger.info("'%s' uchun printer_win_name sozlanmagan, o'tkazib yuborildi", unit_name)
+                continue
+        else:
+            if not device:
+                logger.info("'%s' uchun printer_device sozlanmagan, o'tkazib yuborildi", unit_name)
                 continue
 
-            success = _send_data(receipt_data, p_config)
-            results[p_type] = success
+        # Faqat shu unitga tegishli itemlarni filtrlash
+        unit_item_groups = set(unit.get("item_groups", []))
+        unit_items = [
+            item for item in items_list
+            if item_groups_map.get(
+                item.get("item_code", item.get("item", ""))
+            ) in unit_item_groups
+        ]
+
+        if not unit_items:
+            continue
+
+        try:
+            receipt_data = _build_production_receipt(order_data, unit_items, unit_name)
+            printer_config = {"device": device, "win_name": win_name}
+            success = _send_data(receipt_data, printer_config)
+            results[unit_name] = success
 
             if success:
-                logger.info("Chek chop etildi: %s (%s)", p_name, p_type)
+                logger.info("Production chek chop etildi: %s", unit_name)
             else:
-                logger.warning("Chek chop etilmadi: %s (%s)", p_name, p_type)
-
+                logger.warning("Production chek chop etilmadi: %s", unit_name)
         except Exception as e:
-            logger.error("Printer xatosi %s: %s", p_name, e)
-            results[p_type] = False
+            logger.error("Production printer xatosi (%s): %s", unit_name, e)
+            results[unit_name] = False
 
     return results
 
@@ -367,5 +469,6 @@ def reprint_receipt(order_data: dict, payments_list: list) -> bool:
         logger.warning("Mijoz printeri topilmadi — qayta chop etib bo'lmaydi")
         return False
 
-    receipt_data = _build_customer_receipt(order_data, payments_list)
+    config = load_config()
+    receipt_data = _build_customer_receipt(order_data, payments_list, config)
     return _send_data(receipt_data, customer_printers[0])

@@ -190,9 +190,15 @@ class SyncWorker(QThread):
             logger.info("Bu filialda production unit yo'q")
             return
 
-        # Mavjud lokal printer_device mappingni saqlash
+        # Mavjud lokal printer sozlamalarini saqlash (device/win_name)
         existing = config.get("production_units", [])
-        existing_devices = {u.get("name", ""): u.get("printer_device", "") for u in existing}
+        existing_printers = {
+            u.get("name", ""): {
+                "printer_device": u.get("printer_device", ""),
+                "printer_win_name": u.get("printer_win_name", ""),
+            }
+            for u in existing
+        }
 
         production_units = []
         for unit in units:
@@ -211,10 +217,12 @@ class SyncWorker(QThread):
                     if ig.get("item_group")
                 ]
 
+            existing_printer = existing_printers.get(unit_name, {})
             production_units.append({
                 "name": unit_name,
                 "item_groups": item_groups,
-                "printer_device": existing_devices.get(unit_name, ""),
+                "printer_device": existing_printer.get("printer_device", ""),
+                "printer_win_name": existing_printer.get("printer_win_name", ""),
             })
 
         save_config({"production_units": production_units})

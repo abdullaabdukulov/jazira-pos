@@ -2,52 +2,141 @@
 
 Frappe ERPNext uchun oflayn rejimda ishlaydigan Desktop POS ilovasi.
 
-## Xususiyatlari
-- Oflayn savdo qilish va chek chop etish.
-- Internet kelganda ma'lumotlarni avtomatik serverga yuborish.
-- ESC/POS termal printerlar bilan ishlash (XP-365B va boshqalar).
-- Windows va Linux qo'llab-quvvatlanadi.
+## O'rnatish
 
-## O'rnatish (Ishlab chiquvchilar uchun)
+### Talablar
+- Python 3.10+
+- Frappe server (URY moduli bilan)
+- ESC/POS termal printer (XP-365B, Epson TM va boshqalar)
 
-1. Python 3.10 yoki undan yuqori versiyasini o'rnating.
-2. Virtual muhit yarating:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # Linux
-   venv\Scripts\activate     # Windows
-   ```
-3. Kutubxonalarni o'rnating:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### Linux
 
-## Windows uchun EXE fayl yaratish (Build)
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-Ilovani bitta `.exe` fayl holatiga keltirish uchun `PyInstaller` dan foydalanamiz:
+# Printer uchun ruxsat
+sudo usermod -aG lp $USER
+# Qayta login qiling
+```
 
-1. Terminalni oching va virtual muhitni faollashtiring.
-2. Quyidagi buyruqni bajaring:
-   ```bash
-   pyinstaller --noconfirm --onefile --windowed --name "JaziraPOS" --add-data "ui;ui" --add-data "core;core" --add-data "database;database" --hidden-import="PyQt6.QtCore" --hidden-import="PyQt6.QtGui" --hidden-import="PyQt6.QtWidgets" main.py
-   ```
+### Windows
 
-3. Tayyor fayl `dist/JaziraPOS.exe` papkasida paydo bo'ladi.
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+pip install pywin32
+```
 
-**Eslatma:** Windows'da printer nomi `config.json` faylida `"printer_name"` kaliti orqali berilishi mumkin (default: `XP-365B`).
+### Windows EXE (Build)
 
-## Printer Sozlamalari (Windows)
+```bash
+pyinstaller --noconfirm --onefile --windowed --name "JaziraPOS" \
+  --add-data "ui;ui" --add-data "core;core" --add-data "database;database" \
+  --hidden-import="PyQt6.QtCore" --hidden-import="PyQt6.QtGui" \
+  --hidden-import="PyQt6.QtWidgets" main.py
+```
 
-Windows tizimida printer drayverini o'rnating va uning nomini eslab qoling.
-Agar printer nomi boshqacha bo'lsa (masalan, `POS-80`), `config.json` faylini yarating va quyidagicha yozing:
+Tayyor fayl: `dist/JaziraPOS.exe`
+
+## Ishga tushirish
+
+```bash
+python main.py
+```
+
+Birinchi marta login qilganingizda barcha ma'lumotlar serverdan sinxronizatsiya qilinadi:
+tovarlar, mijozlar, to'lov usullari va **production unitlar**.
+
+## Printer sozlash
+
+`config.example.json` dan nusxa oling:
+
+```bash
+cp config.example.json config.json
+```
+
+### Mijoz printeri
+
+`config.json` dagi `printers` bo'limi:
 
 ```json
 {
-    "printer_name": "POS-80"
+    "printers": [
+        {
+            "name": "Mijoz",
+            "type": "customer",
+            "device": "/dev/usb/lp0",
+            "win_name": "XP-365B"
+        }
+    ]
 }
 ```
 
-## Texnologiyalar
-- **Frontend:** PyQt6
-- **Database:** SQLite (Peewee ORM)
-- **API:** Frappe REST API
+| Maydon | Platforma | Tavsif |
+|---|---|---|
+| `device` | Linux | USB printer yo'li: `/dev/usb/lp0`, `/dev/usb/lp1` |
+| `win_name` | Windows | Printer nomi (Settings → Printers da ko'ringandek) |
+
+Windows da printer nomini tekshirish:
+
+```bash
+python -c "import win32print; [print(p[2]) for p in win32print.EnumPrinters(2)]"
+```
+
+### Production unit printerlar (oshxona, barista)
+
+Production unitlar **serverdan avtomatik** sinxronizatsiya qilinadi (URY Production Unit doctype asosida). Faqat **printer sozlamasini** qo'lda yozish kerak:
+
+```json
+{
+    "production_units": [
+        {
+            "name": "Oshxona",
+            "item_groups": ["Oshpaz mahsulotlari"],
+            "printer_device": "/dev/usb/lp1",
+            "printer_win_name": "Kitchen Printer"
+        },
+        {
+            "name": "Koffe",
+            "item_groups": ["Koffe"],
+            "printer_device": "/dev/usb/lp2",
+            "printer_win_name": "Bar Printer"
+        }
+    ]
+}
+```
+
+| Maydon | Qo'lda | Tavsif |
+|---|---|---|
+| `name` | Yo'q | Serverdan keladi |
+| `item_groups` | Yo'q | Serverdan keladi |
+| `printer_device` | Ha | Linux USB yo'li |
+| `printer_win_name` | Ha | Windows printer nomi |
+
+> Sinxronizatsiya qo'lda yozilgan `printer_device` va `printer_win_name` ni **yo'qotmaydi**.
+
+## Chek chiqarish mantiqiy
+
+Buyurtma → **1 ta mijoz cheki** + **N ta production unit cheki**:
+
+| Chek | Mazmuni | Printer |
+|---|---|---|
+| Mijoz cheki | Barcha tovarlar + narxlar + to'lov + qaytim | `printers[type=customer]` |
+| Production unit cheki | Faqat shu unitga tegishli tovarlar (narxsiz) + stiker | `production_units[].printer_device` |
+
+Misol: 1 Latte + 1 Hotdog buyurtma qilindi:
+- **Mijoz cheki** → Latte 25,000 + Hotdog 15,000 = 40,000 UZS
+- **Barista cheki** → Latte x1, Stiker: 42
+- **Oshxona cheki** → Hotdog x1, Stiker: 42
+
+Filialda production unit yo'q bo'lsa — faqat mijoz cheki chop etiladi.
+
+## Oflayn rejim
+
+- Internet yo'q bo'lsa buyurtma lokal bazaga saqlanadi
+- Cheklar darhol chop etiladi (lokal ma'lumotlar asosida)
+- Internet kelganda avtomatik serverga yuboriladi
+- Qayta chop etilmaydi
