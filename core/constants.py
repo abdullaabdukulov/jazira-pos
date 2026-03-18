@@ -15,9 +15,6 @@ OFFLINE_SYNC_INTERVAL = 30
 # Monitor interval (milliseconds)
 MONITOR_INTERVAL_MS = 10000
 
-# UI grid
-ITEM_GRID_COLUMNS = 4
-
 # Default values
 DEFAULT_CURRENCY = "UZS"
 DEFAULT_CUSTOMER = "guest"

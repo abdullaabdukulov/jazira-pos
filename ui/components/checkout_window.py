@@ -2,9 +2,9 @@ import json
 import uuid
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QMessageBox, QScrollArea, QWidget, QFrame, QGridLayout,
+    QPushButton, QScrollArea, QWidget, QFrame, QGridLayout,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QThread, QTimer
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QDoubleValidator
 from core.api import FrappeAPI
 from core.config import load_config
@@ -12,16 +12,9 @@ from core.logger import get_logger
 from database.models import PendingInvoice, db
 from core.printer import print_receipt
 from ui.components.numpad import TouchNumpad
+from ui.components.dialogs import ClickableLineEdit
 
 logger = get_logger(__name__)
-
-
-class ClickableLineEdit(QLineEdit):
-    clicked = pyqtSignal(object)
-
-    def mousePressEvent(self, event):
-        super().mousePressEvent(event)
-        self.clicked.emit(self)
 
 
 class CheckoutWorker(QThread):
@@ -279,7 +272,7 @@ class CheckoutWindow(QDialog):
         for amt in amounts:
             display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else "MAX"
             btn = QPushButton(display_text)
-            btn.setFixedSize(100, 42)
+            btn.setFixedSize(100, 48)
             if amt == "MAX":
                 btn.setStyleSheet("""
                     QPushButton { background: #3b82f6; color: white;
@@ -449,49 +442,14 @@ class CheckoutWindow(QDialog):
         self.worker.start()
 
     def _on_worker_finished(self, success: bool, message: str):
-        from PyQt6.QtWidgets import QDialog as _QD, QVBoxLayout as _VL, QHBoxLayout as _HL, QLabel as _Lbl, QPushButton as _Btn, QFrame as _Fr
+        from ui.components.dialogs import InfoDialog
         if success or "oflayn saqlandi" in message.lower():
             kind = "success" if success else "warning"
-            icons = {"success": "✓", "warning": "⚠️"}
-            colors = {"success": "#16a34a", "warning": "#d97706"}
-            bgs = {"success": "#f0fdf4", "warning": "#fffbeb"}
-            borders = {"success": "#bbf7d0", "warning": "#fde68a"}
-            d = _QD(self)
-            d.setFixedWidth(380)
-            d.setStyleSheet("background: white;")
-            lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
-            top = _HL()
-            ic = _Lbl(icons[kind])
-            ic.setStyleSheet(f"font-size:26px; background:{bgs[kind]}; border:1.5px solid {borders[kind]}; border-radius:10px; padding:6px 12px;")
-            top.addWidget(ic)
-            ttl = _Lbl("Muvaffaqiyatli" if success else "Oflayn saqlandi")
-            ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{colors[kind]};")
-            top.addWidget(ttl, 1); lay.addLayout(top)
-            sep = _Fr(); sep.setFrameShape(_Fr.Shape.HLine); sep.setStyleSheet("background:#f1f5f9; max-height:1px;"); lay.addWidget(sep)
-            msg = _Lbl(message); msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
-            ok = _Btn("OK"); ok.setFixedHeight(42)
-            ok.setStyleSheet(f"QPushButton{{background:{colors[kind]};color:white;font-weight:700;border-radius:10px;border:none;}} QPushButton:hover{{opacity:0.9;}}")
-            ok.clicked.connect(d.accept); lay.addWidget(ok)
-            d.exec()
+            title = "Muvaffaqiyatli" if success else "Oflayn saqlandi"
+            InfoDialog(self, title, message, kind=kind).exec()
             self._finalize_checkout()
         else:
-            d = _QD(self)
-            d.setFixedWidth(360)
-            d.setStyleSheet("background: white;")
-            lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
-            top = _HL()
-            ic = _Lbl("✕")
-            ic.setStyleSheet("font-size:26px; background:#fef2f2; border:1.5px solid #fecaca; border-radius:10px; padding:6px 12px;")
-            top.addWidget(ic)
-            ttl = _Lbl("Xatolik")
-            ttl.setStyleSheet("font-size:16px; font-weight:800; color:#dc2626;")
-            top.addWidget(ttl, 1); lay.addLayout(top)
-            sep = _Fr(); sep.setFrameShape(_Fr.Shape.HLine); sep.setStyleSheet("background:#f1f5f9; max-height:1px;"); lay.addWidget(sep)
-            msg = _Lbl(message); msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
-            ok = _Btn("OK"); ok.setFixedHeight(42)
-            ok.setStyleSheet("QPushButton{background:#dc2626;color:white;font-weight:700;border-radius:10px;border:none;}")
-            ok.clicked.connect(d.accept); lay.addWidget(ok)
-            d.exec()
+            InfoDialog(self, "Xatolik", message, kind="error").exec()
             self.btn_confirm.setEnabled(True)
             self.btn_confirm.setText("✓  TO'LOV QILISH")
 
@@ -519,20 +477,10 @@ class CheckoutWindow(QDialog):
 
     def _show_printer_warning(self, failed_printers: list):
         """Printer xatosi haqida foydalanuvchiga ogohlantirish"""
-        from PyQt6.QtWidgets import QDialog as _QD, QVBoxLayout as _VL, QLabel as _Lbl, QPushButton as _Btn
+        from ui.components.dialogs import InfoDialog
         names = ", ".join(failed_printers)
-        d = _QD(self)
-        d.setFixedWidth(360)
-        d.setStyleSheet("background: white;")
-        lay = _VL(d); lay.setContentsMargins(22, 18, 22, 18); lay.setSpacing(12)
-        ic = _Lbl("⚠️"); ic.setStyleSheet("font-size:32px;"); ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay.addWidget(ic)
-        ttl = _Lbl("Printer xatosi")
-        ttl.setStyleSheet("font-size:16px; font-weight:800; color:#d97706;")
-        ttl.setAlignment(Qt.AlignmentFlag.AlignCenter); lay.addWidget(ttl)
-        msg = _Lbl(f"Quyidagi printerlar chop etilmadi:\n{names}\n\nBuyurtma saqlandi.")
-        msg.setWordWrap(True); msg.setStyleSheet("font-size:13px; color:#334155;"); lay.addWidget(msg)
-        ok = _Btn("OK"); ok.setFixedHeight(42)
-        ok.setStyleSheet("QPushButton{background:#d97706;color:white;font-weight:700;border-radius:10px;border:none;}")
-        ok.clicked.connect(d.accept); lay.addWidget(ok)
-        d.exec()
+        InfoDialog(
+            self, "Printer xatosi",
+            f"Quyidagi printerlar chop etilmadi:\n{names}\n\nBuyurtma saqlandi.",
+            kind="warning",
+        ).exec()

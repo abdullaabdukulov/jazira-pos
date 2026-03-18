@@ -1,5 +1,4 @@
 import json
-import requests
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -7,9 +6,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
-from core.config import load_config
 from core.logger import get_logger
-from core.constants import HISTORY_FETCH_LIMIT, API_TIMEOUT_LONG
+from core.constants import HISTORY_FETCH_LIMIT
 
 logger = get_logger(__name__)
 
@@ -20,47 +18,36 @@ logger = get_logger(__name__)
 class FetchHistoryWorker(QThread):
     finished = pyqtSignal(bool, list)
 
-    def __init__(self):
+    def __init__(self, api: FrappeAPI, opening_entry: str = ""):
         super().__init__()
-        self.api = FrappeAPI()
+        self.api = api
+        self.opening_entry = opening_entry
 
     def run(self):
-        config = load_config()
-        cashier = config.get("cashier")
-        if not cashier:
-            self.finished.emit(False, [])
+        if not self.opening_entry:
+            self.finished.emit(True, [])
             return
 
-        fields = '["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus"]'
-        endpoint = f"{self.api.url}/api/resource/POS Invoice"
-        params = {
-            "fields": fields,
-            "filters": json.dumps([["POS Invoice", "cashier", "=", cashier]]),
-            "order_by": "creation desc",
-            "limit_page_length": HISTORY_FETCH_LIMIT,
-        }
+        fields = json.dumps(["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus"])
+        filters = json.dumps([["POS Invoice", "pos_opening_entry", "=", self.opening_entry]])
 
-        try:
-            response = requests.get(
-                endpoint, headers=self.api.get_headers(is_json=False),
-                params=params, timeout=API_TIMEOUT_LONG,
-            )
-            if response.status_code == 200:
-                self.finished.emit(True, response.json().get("data", []))
-            else:
-                self.finished.emit(False, [])
-        except requests.exceptions.RequestException as e:
-            logger.error("Tarix yuklashda xatolik: %s", e)
+        data = self.api.fetch_data(
+            "POS Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
+        )
+        if data is not None:
+            data.sort(key=lambda x: x.get("creation", ""), reverse=True)
+            self.finished.emit(True, data)
+        else:
             self.finished.emit(False, [])
 
 
 class FetchDetailsWorker(QThread):
     finished = pyqtSignal(bool, dict)
 
-    def __init__(self, invoice_id: str):
+    def __init__(self, api: FrappeAPI, invoice_id: str):
         super().__init__()
         self.invoice_id = invoice_id
-        self.api = FrappeAPI()
+        self.api = api
 
     def run(self):
         success, doc = self.api.call_method(
@@ -72,11 +59,11 @@ class FetchDetailsWorker(QThread):
 class CancelOrderWorker(QThread):
     finished = pyqtSignal(bool, str)
 
-    def __init__(self, invoice_id: str, reason: str):
+    def __init__(self, api: FrappeAPI, invoice_id: str, reason: str):
         super().__init__()
         self.invoice_id = invoice_id
         self.reason = reason
-        self.api = FrappeAPI()
+        self.api = api
 
     def run(self):
         success, response = self.api.call_method(
@@ -95,8 +82,9 @@ class CancelOrderWorker(QThread):
 class TransactionDetailDialog(QDialog):
     """Still kept as QDialog so double-click flow works unchanged."""
 
-    def __init__(self, parent, invoice_id: str):
+    def __init__(self, parent, api: FrappeAPI, invoice_id: str):
         super().__init__(parent)
+        self.api = api
         self.invoice_id = invoice_id
         self.setWindowTitle(f"Chek: {invoice_id}")
         self.setFixedSize(520, 560)
@@ -169,7 +157,7 @@ class TransactionDetailDialog(QDialog):
         layout.addWidget(close_btn)
 
     def _load(self):
-        self.worker = FetchDetailsWorker(self.invoice_id)
+        self.worker = FetchDetailsWorker(self.api, self.invoice_id)
         self.worker.finished.connect(self._on_loaded)
         self.worker.start()
 
@@ -294,7 +282,7 @@ class CancelReasonDialog(QDialog):
     def _make_key(self, key):
         label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
         btn = QPushButton(label)
-        btn.setFixedHeight(38)
+        btn.setFixedHeight(44)
         if key == '⌫':
             style = "background:#fee2e2; color:#ef4444; font-size:15px; font-weight:bold;"
         elif key == 'CLR':
@@ -347,8 +335,10 @@ class CancelReasonDialog(QDialog):
 class HistoryWindow(QWidget):
     """Inline panel — embed in main_window, show/hide via toggle."""
 
-    def __init__(self, parent=None):
+    def __init__(self, api: FrappeAPI, parent=None):
         super().__init__(parent)
+        self.api = api
+        self.opening_entry = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -371,7 +361,7 @@ class HistoryWindow(QWidget):
         hdr_row.addStretch()
 
         refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(36)
+        refresh_btn.setFixedHeight(44)
         refresh_btn.setStyleSheet("""
             QPushButton {
                 padding: 0 16px; background: #f1f5f9; color: #475569;
@@ -384,7 +374,7 @@ class HistoryWindow(QWidget):
         hdr_row.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(36, 36)
+        close_btn.setFixedSize(44, 44)
         close_btn.setStyleSheet("""
             QPushButton { background: #fee2e2; color: #b91c1c;
                 font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }
@@ -431,7 +421,7 @@ class HistoryWindow(QWidget):
 
     def load_history(self):
         self.table.setRowCount(0)
-        self.worker = FetchHistoryWorker()
+        self.worker = FetchHistoryWorker(self.api, self.opening_entry)
         self.worker.finished.connect(self._on_loaded)
         self.worker.start()
 
@@ -474,14 +464,16 @@ class HistoryWindow(QWidget):
 
     def _show_details(self, item):
         invoice_id = self.table.item(item.row(), 0).text()
-        TransactionDetailDialog(self, invoice_id).exec()
+        TransactionDetailDialog(self, self.api, invoice_id).exec()
 
     def _confirm_cancel(self, invoice_id: str):
         dlg = CancelReasonDialog(self, invoice_id)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             reason = dlg.get_reason()
-            self.cancel_worker = CancelOrderWorker(invoice_id, reason)
-            self.cancel_worker.finished.connect(
-                lambda s, m: (QMessageBox.information(self, "Natija", m), self.load_history())
-            )
+            self.cancel_worker = CancelOrderWorker(self.api, invoice_id, reason)
+            self.cancel_worker.finished.connect(self._on_cancel_finished)
             self.cancel_worker.start()
+
+    def _on_cancel_finished(self, success: bool, message: str):
+        QMessageBox.information(self, "Natija", message)
+        self.load_history()

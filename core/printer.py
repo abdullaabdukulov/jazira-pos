@@ -291,6 +291,9 @@ def _get_item_groups_map(items: list) -> dict:
     except Exception as e:
         logger.error("Item group olishda xatolik: %s", e)
         return {}
+    finally:
+        if not db.is_closed():
+            db.close()
 
 
 # ──────────────────────────────────────────────────
@@ -460,6 +463,23 @@ def open_cash_drawer() -> bool:
     p = customer_printers[0]
     data = CMD_INIT + CMD_OPEN_DRAWER
     return _send_data(data, p)
+
+
+def send_test_print(printer_config: dict) -> bool:
+    """Sinov cheki — printer ishlayotganligini tekshirish."""
+    data = bytearray()
+    data += CMD_INIT
+    data += CMD_ALIGN_CENTER
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    data += _encode("SINOV CHEKI\n")
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+    data += _encode(f"Printer: {printer_config.get('name', 'Test')}\n")
+    data += _encode(datetime.now().strftime("%Y-%m-%d  %H:%M:%S") + "\n")
+    data += _separator()
+    data += _center_text("Printer ishlayapti!")
+    data += CMD_FEED
+    data += CMD_CUT
+    return _send_data(bytes(data), printer_config)
 
 
 def reprint_receipt(order_data: dict, payments_list: list) -> bool:

@@ -12,6 +12,8 @@ class TouchKeyboard(QDialog):
         self.setFixedSize(900, 500)
         self.setModal(False) # Allows interaction with parent (Item Grid)
         self.is_numeric = is_numeric
+        self._caps = False
+        self._letter_buttons = []
         self.init_ui(initial_text)
 
     def init_ui(self, initial_text):
@@ -84,18 +86,20 @@ class TouchKeyboard(QDialog):
                 r += 1
 
     def setup_full_layout(self):
+        self._letter_buttons = []
         rows = [
             ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
             ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '⌫'],
-            ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'CLEAR'],
-            ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', 'SPACE']
+            ['CAPS', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'CLEAR'],
+            ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', 'SPACE'],
+            ['@', '-', '_', ':', '/', '#', '+', '='],
         ]
         for r_idx, row in enumerate(rows):
             for c_idx, key in enumerate(row):
                 span = 1
                 if key == 'SPACE': span = 3
-                elif key in ['⌫', 'CLEAR']: span = 2
-                
+                elif key in ['⌫', 'CLEAR', 'CAPS']: span = 2
+
                 btn = self.create_key(key)
                 self.grid.addWidget(btn, r_idx, c_idx, 1, span)
 
@@ -103,10 +107,11 @@ class TouchKeyboard(QDialog):
         display_text = text
         if text == 'CLEAR': display_text = "TOZALASH"
         elif text == 'SPACE': display_text = "PROBEL"
-        
+        elif text == 'CAPS': display_text = "⇧ Aa"
+
         btn = QPushButton(display_text)
         btn.setMinimumHeight(65)
-        
+
         style = """
             QPushButton {
                 background-color: white;
@@ -118,20 +123,32 @@ class TouchKeyboard(QDialog):
             }
             QPushButton:pressed { background-color: #f3f4f6; }
         """
-        
+
         if text == '⌫':
             style += "QPushButton { background-color: #fee2e2; color: #ef4444; }"
         elif text == 'CLEAR':
             style += "QPushButton { background-color: #fff7ed; color: #ea580c; font-size: 14px; }"
+        elif text == 'CAPS':
+            style += "QPushButton { background-color: #e0e7ff; color: #4338ca; font-size: 16px; }"
         elif text == 'SPACE':
             style += "QPushButton { background-color: #eff6ff; color: #3b82f6; }"
             btn.setMinimumWidth(200)
-        
+
         btn.setStyleSheet(style)
         btn.clicked.connect(lambda: self.on_key_pressed(text))
+
+        if len(text) == 1 and text.isalpha():
+            self._letter_buttons.append(btn)
+
         return btn
 
     def on_key_pressed(self, key):
+        if key == 'CAPS':
+            self._caps = not self._caps
+            for btn in self._letter_buttons:
+                txt = btn.text()
+                btn.setText(txt.upper() if self._caps else txt.lower())
+            return
         current = self.input_field.text()
         if key == '⌫':
             self.input_field.setText(current[:-1])
@@ -140,7 +157,8 @@ class TouchKeyboard(QDialog):
         elif key == 'SPACE':
             self.input_field.setText(current + " ")
         else:
-            self.input_field.setText(current + key)
+            char = key.lower() if not self._caps else key.upper()
+            self.input_field.setText(current + char)
 
     def confirm(self):
         self.text_confirmed.emit(self.input_field.text())

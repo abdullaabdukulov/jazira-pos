@@ -181,7 +181,7 @@ class CartWidget(QWidget):
         totals_layout.addStretch()
 
         self.clear_btn = QPushButton("Tozalash")
-        self.clear_btn.setFixedSize(100, 40)
+        self.clear_btn.setFixedSize(110, 48)
         self.clear_btn.setStyleSheet("""
             QPushButton {
                 background: #fee2e2; color: #b91c1c;
@@ -532,36 +532,53 @@ class CartWidget(QWidget):
             self.table.setItem(row_idx, 0, name_item)
 
             qty_widget = QWidget()
+            qty_widget.setStyleSheet("background: transparent;")
             qty_layout = QHBoxLayout(qty_widget)
-            qty_layout.setContentsMargins(2, 2, 2, 2)
-            qty_layout.setSpacing(3)
-            qty_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+            qty_layout.setContentsMargins(4, 6, 4, 6)
+            qty_layout.setSpacing(0)
+            qty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            btn_style = (
-                "QPushButton { font-size: 15px; font-weight: bold; "
-                "background: #f1f5f9; border-radius: 5px; color: #64748b; "
-                "min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; }"
-                "QPushButton:hover { background: #e2e8f0; color: #334155; }"
-                "QPushButton:pressed { background: #cbd5e1; }"
-            )
-            btn_minus = QPushButton("-")
-            btn_minus.setFixedSize(28, 28)
-            btn_minus.setStyleSheet(btn_style)
+            btn_minus = QPushButton("−")
+            btn_minus.setFixedSize(44, 44)
+            btn_minus.setStyleSheet("""
+                QPushButton {
+                    font-size: 20px; font-weight: bold; color: #dc2626;
+                    background: #fef2f2;
+                    border: none;
+                    border-top-left-radius: 10px;
+                    border-bottom-left-radius: 10px;
+                    border-top-right-radius: 0px;
+                    border-bottom-right-radius: 0px;
+                }
+                QPushButton:pressed { background: #fecaca; }
+            """)
             btn_minus.clicked.connect(lambda checked, c=code: self.update_qty(c, -1))
 
             qty_label = QtyLabel(str(int(data["qty"])))
             qty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qty_label.setFixedSize(34, 28)
+            qty_label.setFixedSize(48, 44)
             qty_label.setStyleSheet("""
-                font-size: 14px; font-weight: 700; color: #1e293b;
-                background: white; border-radius: 5px;
-                border: 1px solid #e2e8f0;
+                font-size: 17px; font-weight: 800; color: #1e293b;
+                background: #f8fafc; border: none;
+                border-top: 1px solid #e2e8f0;
+                border-bottom: 1px solid #e2e8f0;
             """)
             qty_label.clicked.connect(lambda c=code, q=str(int(data["qty"])): self._open_qty_numpad(c, q))
 
             btn_plus = QPushButton("+")
-            btn_plus.setFixedSize(28, 28)
-            btn_plus.setStyleSheet(btn_style)
+            btn_plus.setFixedSize(44, 44)
+            btn_plus.setStyleSheet("""
+                QPushButton {
+                    font-size: 20px; font-weight: bold; color: #16a34a;
+                    background: #f0fdf4;
+                    border: none;
+                    border-top-right-radius: 10px;
+                    border-bottom-right-radius: 10px;
+                    border-top-left-radius: 0px;
+                    border-bottom-left-radius: 0px;
+                }
+                QPushButton:pressed { background: #dcfce7; }
+            """)
             btn_plus.clicked.connect(lambda checked, c=code: self.update_qty(c, 1))
 
             qty_layout.addWidget(btn_minus)

@@ -12,6 +12,21 @@ MIGRATIONS = [
     (3, "Add offline_id column to pendinginvoice", [
         "ALTER TABLE pendinginvoice ADD COLUMN offline_id VARCHAR(255);",
     ]),
+    (4, "Create posshift table for POS opening/closing", [
+        """CREATE TABLE IF NOT EXISTS posshift (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            opening_entry VARCHAR(255),
+            pos_profile VARCHAR(255) NOT NULL,
+            company VARCHAR(255) NOT NULL,
+            user VARCHAR(255) NOT NULL,
+            opening_amounts TEXT DEFAULT '{}',
+            status VARCHAR(20) DEFAULT 'Open',
+            opened_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            closed_at DATETIME
+        );""",
+        "CREATE INDEX IF NOT EXISTS idx_posshift_opening_entry ON posshift(opening_entry);",
+        "CREATE INDEX IF NOT EXISTS idx_posshift_status ON posshift(status);",
+    ]),
 ]
 
 

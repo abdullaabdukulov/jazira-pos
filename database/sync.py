@@ -119,12 +119,14 @@ class SyncWorker(QThread):
             if success_ig and isinstance(ig_data, list):
                 item_groups_map = {d["name"]: d.get("item_group", "") for d in ig_data}
 
-        with db.atomic():
-            Item.delete().execute()
-            ItemPrice.delete().execute()
+        # Serverdan kelgan item kodlari
+        server_item_codes = set()
 
+        with db.atomic():
             for item_data in items:
                 item_code = item_data.get("item")
+                server_item_codes.add(item_code)
+
                 Item.insert(
                     item_code=item_code,
                     item_name=item_data.get("item_name"),
@@ -140,6 +142,11 @@ class SyncWorker(QThread):
                     price_list_rate=float(item_data.get("rate") or 0),
                     currency=DEFAULT_CURRENCY,
                 ).on_conflict_replace().execute()
+
+            # Serverda yo'q bo'lgan eski itemlarni tozalash
+            if server_item_codes:
+                Item.delete().where(Item.item_code.not_in(server_item_codes)).execute()
+                ItemPrice.delete().where(ItemPrice.item_code.not_in(server_item_codes)).execute()
 
         logger.info("%d ta tovar sinxronizatsiya qilindi", len(items))
 

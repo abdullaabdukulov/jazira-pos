@@ -51,10 +51,21 @@ class PendingInvoice(BaseModel):
     created_at = DateTimeField(default=datetime.datetime.now)
 
 
+class PosShift(BaseModel):
+    opening_entry = CharField(null=True, index=True)
+    pos_profile = CharField()
+    company = CharField()
+    user = CharField()
+    opening_amounts = TextField(default="{}")
+    status = CharField(default="Open")  # Open / Closed
+    opened_at = DateTimeField(default=datetime.datetime.now)
+    closed_at = DateTimeField(null=True)
+
+
 class SchemaVersion(BaseModel):
     version = IntegerField(unique=True)
     applied_at = DateTimeField(default=datetime.datetime.now)
     description = CharField(default="")
 
 
-ALL_MODELS = [Item, Customer, ItemPrice, PendingInvoice, SchemaVersion]
+ALL_MODELS = [Item, Customer, ItemPrice, PendingInvoice, PosShift, SchemaVersion]

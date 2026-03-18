@@ -1,12 +1,23 @@
-"""Shared modern dialogs for the POS application.
+"""Shared modern dialogs and widgets for the POS application.
 
 InfoDialog — success / warning / error
 ConfirmDialog — yes / no
+ClickableLineEdit — click signal bilan QLineEdit
 """
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame,
+    QPushButton, QFrame, QLineEdit,
 )
+from PyQt6.QtCore import pyqtSignal
+
+
+class ClickableLineEdit(QLineEdit):
+    """Bosilganda signal chiqaradigan QLineEdit — numpad bilan ishlash uchun."""
+    clicked = pyqtSignal(object)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.clicked.emit(self)
 
 
 class InfoDialog(QDialog):

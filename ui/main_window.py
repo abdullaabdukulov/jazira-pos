@@ -2,11 +2,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QSplitter, QTabWidget,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from database.sync import SyncWorker
 from database.offline_sync import OfflineSyncWorker
 from database.migrations import initialize_db
-from database.models import PendingInvoice, db
+from database.models import PendingInvoice, PosShift, db
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import MONITOR_INTERVAL_MS
@@ -16,9 +16,108 @@ from ui.components.cart_widget import CartWidget
 from ui.components.checkout_window import CheckoutWindow
 from ui.components.history_window import HistoryWindow
 from ui.components.offline_queue_window import OfflineQueueWindow
+from ui.components.pos_opening import PosOpeningDialog
+from ui.components.pos_closing import PosClosingDialog
+from ui.components.pos_shifts_window import PosShiftsWindow
 from ui.components.dialogs import InfoDialog, ConfirmDialog
 
 logger = get_logger(__name__)
+
+
+class ConnectivityCheckWorker(QThread):
+    """Server bilan aloqani tekshirish — background thread'da."""
+    finished = pyqtSignal(bool)
+
+    def __init__(self, api: FrappeAPI):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        try:
+            success, _ = self.api.call_method("frappe.auth.get_logged_user")
+            self.finished.emit(success)
+        except Exception:
+            self.finished.emit(False)
+
+
+class PosOpeningCheckWorker(QThread):
+    """Serverdan ochiq kassa borligini tekshirish.
+
+    Mantiq:
+    1. Server bilan aloqa bor → server javobiga ishonish (lokal bazani sinxronlash)
+    2. Server bilan aloqa yo'q → faqat shu holda lokal bazaga qarash
+    """
+    finished = pyqtSignal(bool, str)  # has_opening, opening_entry_name
+
+    def __init__(self, api: FrappeAPI):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        success, response = self.api.call_method("ury.ury_pos.api.checkPosOpening")
+
+        if success and isinstance(response, dict):
+            # Server javob berdi — unga ishonish kerak
+            status = response.get("status")
+            if status == "open":
+                opening_entry = response.get("opening_entry", "")
+                self._sync_local_shift(opening_entry)
+                self.finished.emit(True, opening_entry)
+            else:
+                # Server: kassa yopiq — lokal bazani ham tozalash
+                self._close_local_shifts()
+                self.finished.emit(False, "")
+        else:
+            # Server bilan aloqa yo'q — faqat lokal bazaga qarash
+            try:
+                db.connect(reuse_if_open=True)
+                shift = PosShift.select().where(PosShift.status == "Open").first()
+                if shift:
+                    self.finished.emit(True, shift.opening_entry or "")
+                else:
+                    self.finished.emit(False, "")
+            except Exception:
+                self.finished.emit(False, "")
+            finally:
+                if not db.is_closed():
+                    db.close()
+
+    def _sync_local_shift(self, opening_entry: str):
+        """Server ochiq desa — lokal bazada ham ochiq shift bo'lishini ta'minlash."""
+        try:
+            db.connect(reuse_if_open=True)
+            existing = PosShift.select().where(
+                (PosShift.status == "Open") & (PosShift.opening_entry == opening_entry)
+            ).first()
+            if not existing:
+                # Eski ochiq shiftlarni yopish + yangi yaratish
+                PosShift.update(status="Closed").where(PosShift.status == "Open").execute()
+                PosShift.create(
+                    opening_entry=opening_entry,
+                    pos_profile="",
+                    company="",
+                    user=self.api.user or "",
+                    status="Open",
+                )
+        except Exception as e:
+            logger.debug("Lokal shift sinxronlash: %s", e)
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _close_local_shifts(self):
+        """Server yopiq desa — lokal bazadagi barcha ochiq shiftlarni yopish."""
+        try:
+            import datetime
+            db.connect(reuse_if_open=True)
+            PosShift.update(
+                status="Closed", closed_at=datetime.datetime.now()
+            ).where(PosShift.status == "Open").execute()
+        except Exception as e:
+            logger.debug("Lokal shiftlarni yopish: %s", e)
+        finally:
+            if not db.is_closed():
+                db.close()
 
 
 class MainWindow(QMainWindow):
@@ -27,6 +126,7 @@ class MainWindow(QMainWindow):
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
+        self.opening_entry = None  # Ochiq kassa nomi
         self.setWindowTitle("Jazira POS")
         self.showMaximized()
 
@@ -102,7 +202,7 @@ class MainWindow(QMainWindow):
         def _tb_btn(label: str, bg: str, color: str = "white",
                     hover: str = "", border: str = "none") -> QPushButton:
             b = QPushButton(label)
-            b.setFixedHeight(40)
+            b.setFixedHeight(48)
             h = hover or bg
             b.setStyleSheet(f"""
                 QPushButton {{
@@ -145,6 +245,35 @@ class MainWindow(QMainWindow):
         )
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
+
+        # Printer Settings Button — slate
+        self.printer_btn = _tb_btn(
+            "Printer", "#475569", hover="#334155",
+        )
+        self.printer_btn.clicked.connect(self.show_printer_settings)
+        top_bar.addWidget(self.printer_btn)
+
+        # Kassa tarixi Button — slate
+        self.shifts_btn = _tb_btn(
+            "Kassa tarixi", "#475569", hover="#334155",
+        )
+        self.shifts_btn.clicked.connect(self.show_shifts_history)
+        top_bar.addWidget(self.shifts_btn)
+
+        # Kassa ochish Button — green (kassa ochilmagan holatda ko'rinadi)
+        self.open_shift_btn = _tb_btn(
+            "Kassa ochish", "#16a34a", hover="#15803d",
+        )
+        self.open_shift_btn.clicked.connect(self._show_pos_opening_dialog)
+        self.open_shift_btn.setVisible(False)
+        top_bar.addWidget(self.open_shift_btn)
+
+        # Kassa yopish Button — orange/red
+        self.close_shift_btn = _tb_btn(
+            "Kassa yopish", "#dc2626", hover="#b91c1c",
+        )
+        self.close_shift_btn.clicked.connect(self.show_pos_closing)
+        top_bar.addWidget(self.close_shift_btn)
 
         # Logout Button — amber
         self.logout_btn = _tb_btn(
@@ -215,7 +344,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(splitter, stretch=1)
 
         # ── Inline History Panel (hidden by default) ──
-        self.history_panel = HistoryWindow(self)
+        self.history_panel = HistoryWindow(self.api, self)
         self.history_panel.setVisible(False)
         self.history_panel.setMinimumHeight(360)
         self.history_panel.setMaximumHeight(500)
@@ -224,6 +353,17 @@ class MainWindow(QMainWindow):
             border-top: 2px solid #e2e8f0;
         """)
         main_layout.addWidget(self.history_panel)
+
+        # ── Inline Shifts Panel (hidden by default) ──
+        self.shifts_panel = PosShiftsWindow(self.api, self)
+        self.shifts_panel.setVisible(False)
+        self.shifts_panel.setMinimumHeight(300)
+        self.shifts_panel.setMaximumHeight(450)
+        self.shifts_panel.setStyleSheet("""
+            background: white;
+            border-top: 2px solid #e2e8f0;
+        """)
+        main_layout.addWidget(self.shifts_panel)
 
         # Footer
         self.status_label = QLabel("Tayyor.")
@@ -249,6 +389,9 @@ class MainWindow(QMainWindow):
         self.monitor_timer.timeout.connect(self.monitor_system)
         self.monitor_timer.start(MONITOR_INTERVAL_MS)
         self.monitor_system()
+
+        # POS Opening check — kassa ochiqligini tekshirish
+        self._check_pos_opening()
 
     def request_exit(self):
         dlg = ConfirmDialog(
@@ -283,12 +426,12 @@ class MainWindow(QMainWindow):
         self._update_offline_queue_count()
 
     def _check_server_status(self):
-        try:
-            # Shared API orqali tekshiriladi
-            success, _ = self.api.call_method("frappe.auth.get_logged_user")
-            self._update_connectivity_ui(success)
-        except Exception:
-            self._update_connectivity_ui(False)
+        # Background thread'da tekshirish — GUI muzlamasligi uchun
+        if hasattr(self, '_connectivity_worker') and self._connectivity_worker.isRunning():
+            return  # oldingi tekshiruv hali tugamagan
+        self._connectivity_worker = ConnectivityCheckWorker(self.api)
+        self._connectivity_worker.finished.connect(self._update_connectivity_ui)
+        self._connectivity_worker.start()
 
     def _update_connectivity_ui(self, is_online: bool):
         if is_online:
@@ -367,7 +510,24 @@ class MainWindow(QMainWindow):
             active_cart.clear_cart()
         self._update_offline_queue_count()
 
+    def show_printer_settings(self):
+        from ui.components.printer_settings import PrinterSettingsDialog
+        dlg = PrinterSettingsDialog(self, self.api)
+        dlg.exec()
+
+    def show_shifts_history(self):
+        visible = self.shifts_panel.isVisible()
+        if visible:
+            self.shifts_panel.setVisible(False)
+        else:
+            # Tarix panelini yopish (ikkalasi bir vaqtda ochilmasin)
+            self.history_panel.setVisible(False)
+            self.shifts_panel.setVisible(True)
+            self.shifts_panel.load_shifts()
+
     def show_history(self):
+        # Kassa tarixi panelini yopish
+        self.shifts_panel.setVisible(False)
         visible = self.history_panel.isVisible()
         if visible:
             self.history_panel.setVisible(False)
@@ -376,6 +536,7 @@ class MainWindow(QMainWindow):
                 "font-weight: bold; border-radius: 8px; margin-left: 10px;"
             )
         else:
+            self.history_panel.opening_entry = self.opening_entry or ""
             self.history_panel.setVisible(True)
             self.history_panel.load_history()
             self.history_btn.setStyleSheet(
@@ -385,17 +546,6 @@ class MainWindow(QMainWindow):
             )
 
     def start_sync(self):
-        success, _ = self.api.call_method("frappe.auth.get_logged_user")
-        if not success:
-            InfoDialog(
-                self,
-                "Internet yo'q",
-                "Hozirda server bilan aloqa mavjud emas.\n"
-                "Internet ulangandan so'ng sinxronizatsiya qilishingiz mumkin.",
-                kind="warning",
-            ).exec()
-            return
-
         self.sync_btn.setEnabled(False)
         self._auto_sync = False  # qo'lda bosdi — dialog ko'rsatilsin
         self.status_label.setText("Sinxronizatsiya boshlandi...")
@@ -424,7 +574,91 @@ class MainWindow(QMainWindow):
             else:
                 InfoDialog(self, "Xatolik", message, kind="error").exec()
 
+    # ── POS Opening / Closing ──────────────────────────────
+    def _check_pos_opening(self):
+        """Login dan keyin kassa ochiqligini tekshirish."""
+        self._set_pos_enabled(False)
+        self.opening_check_worker = PosOpeningCheckWorker(self.api)
+        self.opening_check_worker.finished.connect(self._on_opening_check_done)
+        self.opening_check_worker.start()
+
+    def _on_opening_check_done(self, has_opening: bool, opening_entry: str):
+        if has_opening:
+            self.opening_entry = opening_entry
+            self._set_pos_enabled(True)
+            self.status_label.setText("Kassa ochiq.")
+        else:
+            self._show_pos_opening_dialog()
+
+    def _show_pos_opening_dialog(self):
+        dlg = PosOpeningDialog(self, self.api)
+        dlg.opening_completed.connect(self._on_pos_opened)
+        dlg.exit_requested.connect(self._on_opening_exit)
+        dlg.logout_requested.connect(self._on_opening_logout)
+        dlg.exec()
+
+    def _on_opening_exit(self):
+        """Kassa ochish dialogidan chiqish — dasturni yopish."""
+        self.close()
+
+    def _on_opening_logout(self):
+        """Kassa ochish dialogidan logout — boshqa kassir kirishi uchun."""
+        self.logout_requested.emit()
+
+    def _on_pos_opened(self, opening_entry: str):
+        self.opening_entry = opening_entry
+        self._set_pos_enabled(True)
+        self.status_label.setText("Kassa ochildi!")
+
+    def show_pos_closing(self):
+        if not self.opening_entry:
+            InfoDialog(
+                self, "Kassa topilmadi",
+                "Ochiq kassa topilmadi.",
+                kind="warning",
+            ).exec()
+            return
+
+        dlg = ConfirmDialog(
+            self, "Kassani yopish",
+            "Kassani yopmoqchimisiz?\nBarcha to'lovlar hisoblanadi.",
+            icon="🔒", yes_text="Ha, yopish", yes_color="#dc2626",
+        )
+        dlg.exec()
+        if not dlg.result_accepted:
+            return
+
+        closing_dlg = PosClosingDialog(self, self.api, self.opening_entry)
+        closing_dlg.closing_completed.connect(self._on_pos_closed)
+        closing_dlg.exec()
+
+    def _on_pos_closed(self):
+        self.opening_entry = None
+        self._set_pos_enabled(False)
+        self.status_label.setText("Kassa yopildi.")
+
+        # Muvaffaqiyat xabari
+        InfoDialog(
+            self, "Kassa yopildi",
+            "Kassa muvaffaqiyatli yopildi.\nDavom etish uchun yangi kassa oching.",
+            kind="success",
+        ).exec()
+
+        # Yangi kassa ochish dialogini ko'rsatish
+        self._show_pos_opening_dialog()
+
+    def _set_pos_enabled(self, enabled: bool):
+        """Kassa ochiq/yopiq holatiga qarab UI elementlarini boshqarish."""
+        self.add_sale_btn.setEnabled(enabled)
+        self.close_shift_btn.setEnabled(enabled)
+        self.open_shift_btn.setVisible(not enabled)
+        if hasattr(self, 'item_browser'):
+            self.item_browser.setEnabled(enabled)
+        if hasattr(self, 'sales_tabs'):
+            self.sales_tabs.setEnabled(enabled)
+
     def closeEvent(self, event):
+        self.monitor_timer.stop()
         self.offline_sync_worker.stop()
-        self.offline_sync_worker.wait()
+        self.offline_sync_worker.wait(2000)  # max 2 sek kutish
         super().closeEvent(event)

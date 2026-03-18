@@ -3,12 +3,12 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QScrollArea, QGridLayout, QLabel, QSizePolicy, QFrame,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from database.models import Item, ItemPrice, db
 from core.api import FrappeAPI
 from core.logger import get_logger
-from core.constants import ITEM_LOAD_LIMIT, ITEM_GRID_COLUMNS, IMAGE_TIMEOUT
+from core.constants import ITEM_LOAD_LIMIT, IMAGE_TIMEOUT
 from ui.components.keyboard import TouchKeyboard
 
 logger = get_logger(__name__)
@@ -49,8 +49,6 @@ class ItemButton(QFrame):
         self.api = api
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.setMinimumSize(QSize(160, 220))
-        self.setMaximumSize(QSize(220, 260))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._apply_normal_style()
 
@@ -170,14 +168,6 @@ class ItemButton(QFrame):
         self.image_label.setPixmap(scaled)
         self.image_label.setText("")
 
-    def enterEvent(self, event):
-        self._apply_hover_style()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self._apply_normal_style()
-        super().leaveEvent(event)
-
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._apply_pressed_style()
@@ -185,7 +175,7 @@ class ItemButton(QFrame):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._apply_hover_style()
+            self._apply_normal_style()
             self.clicked.emit()
         super().mouseReleaseEvent(event)
 
@@ -198,6 +188,13 @@ class ItemBrowser(QWidget):
         self.api = api
         self.current_category = None
         self.kb = None
+        self._last_columns = 0
+        self._caps = False
+        self._letter_buttons = []
+        self._resize_timer = QTimer()
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(150)
+        self._resize_timer.timeout.connect(self._on_resize_done)
         self.init_ui()
         self.load_categories()
         self.load_items()
@@ -275,7 +272,7 @@ class ItemBrowser(QWidget):
 
         self.items_grid = QGridLayout()
         self.items_grid.setSpacing(12)
-        self.items_grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.items_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         outer_layout.addLayout(self.items_grid)
         outer_layout.addStretch()
@@ -339,10 +336,11 @@ class ItemBrowser(QWidget):
         panel_layout.addLayout(top_row)
 
         # Klaviatura qatorlari
+        self._letter_buttons = []
         rows = [
             ['1','2','3','4','5','6','7','8','9','0','⌫'],
             ['Q','W','E','R','T','Y','U','I','O','P'],
-            ['A','S','D','F','G','H','J','K','L','CLR'],
+            ['CAPS','A','S','D','F','G','H','J','K','L','CLR'],
             ['Z','X','C','V','B','N','M',' SPACE '],
         ]
         for row_keys in rows:
@@ -359,6 +357,7 @@ class ItemBrowser(QWidget):
         label = key.strip()
         if label == 'SPACE': label = '␣'
         elif label == 'CLR': label = 'TOZALASH'
+        elif label == 'CAPS': label = '⇧ Aa'
 
         btn = QPushButton(label)
         btn.setFixedHeight(44)
@@ -367,6 +366,8 @@ class ItemBrowser(QWidget):
             style = "background:#fee2e2; color:#ef4444; font-size:18px; font-weight:bold;"
         elif key.strip() == 'CLR':
             style = "background:#fff7ed; color:#ea580c; font-size:11px; font-weight:bold;"
+        elif key.strip() == 'CAPS':
+            style = "background:#e0e7ff; color:#4338ca; font-size:13px; font-weight:bold;"
         elif 'SPACE' in key:
             style = "background:#eff6ff; color:#3b82f6; font-size:14px; font-weight:bold;"
             btn.setMinimumWidth(120)
@@ -384,9 +385,19 @@ class ItemBrowser(QWidget):
             QPushButton:pressed {{ background: #dbeafe; }}
         """)
         btn.clicked.connect(lambda _, k=key.strip(): self._on_key(k))
+
+        if len(key.strip()) == 1 and key.strip().isalpha():
+            self._letter_buttons.append(btn)
+
         return btn
 
     def _on_key(self, key):
+        if key == 'CAPS':
+            self._caps = not self._caps
+            for btn in self._letter_buttons:
+                txt = btn.text()
+                btn.setText(txt.upper() if self._caps else txt.lower())
+            return
         current = self.search_input.text()
         if key == '⌫':
             new_text = current[:-1]
@@ -395,7 +406,8 @@ class ItemBrowser(QWidget):
         elif key == 'SPACE':
             new_text = current + ' '
         else:
-            new_text = current + key
+            char = key.lower() if not self._caps else key.upper()
+            new_text = current + char
         self.search_input.setText(new_text)
         # Display yangilash
         self.kb_display.setText(new_text if new_text else "Qidiruv...")
@@ -453,12 +465,25 @@ class ItemBrowser(QWidget):
         self.current_category = None if is_all else cat
         self.load_items(self.search_input.text())
 
+    def _calc_grid_columns(self):
+        """Mavjud kenglikka qarab ustunlar sonini hisoblash"""
+        available = self.items_scroll.viewport().width()
+        if available <= 0:
+            available = 600
+        spacing = self.items_grid.spacing()
+        min_card_width = 170
+        cols = max(2, (available + spacing) // (min_card_width + spacing))
+        return cols
+
     def load_items(self, search=""):
         # Gridni tozalash
         while self.items_grid.count():
             child = self.items_grid.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
+
+        columns = self._calc_grid_columns()
+        self._last_columns = columns
 
         try:
             db.connect(reuse_if_open=True)
@@ -480,11 +505,20 @@ class ItemBrowser(QWidget):
                 )
                 self.items_grid.addWidget(card, row, col)
                 col += 1
-                if col >= ITEM_GRID_COLUMNS:
+                if col >= columns:
                     col = 0
                     row += 1
         finally:
             db.close()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._resize_timer.start()
+
+    def _on_resize_done(self):
+        new_cols = self._calc_grid_columns()
+        if new_cols != self._last_columns:
+            self.load_items(self.search_input.text())
 
     def filter_items(self, t):
         self.load_items(t)
