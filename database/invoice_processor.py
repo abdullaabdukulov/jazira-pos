@@ -73,7 +73,7 @@ def submit_invoice(api, payload: dict, invoice_name: str, payments: list):
 def print_invoice(invoice_name: str, payload: dict, payments: list):
     """Lokal printer orqali chop etish"""
     try:
-        from core.printer import print_receipt
+        from core.qz_printer import print_receipt
 
         order_data = payload.copy()
         total_amount = sum(
@@ -104,7 +104,14 @@ def process_pending_invoice(api, invoice) -> tuple[str, str]:
     try:
         payload = json.loads(invoice.invoice_data)
         saved_payments = payload.pop("_payments", None)
+        existing_order_name = payload.pop("_sync_order_name", None)
         ensure_mandatory_fields(payload)
+
+        # Agar sync_order allaqachon muvaffaqiyatli bo'lgan bo'lsa (faqat make_invoice xato qilgan),
+        # qayta sync_order qilmasdan to'g'ridan-to'g'ri submit_invoice qilamiz
+        if existing_order_name and saved_payments:
+            submit_invoice(api, payload, existing_order_name, saved_payments)
+            return "Synced", "Muvaffaqiyatli (faqat make_invoice qayta yuborildi)"
 
         success, response = api.call_method(
             "ury.ury.doctype.ury_order.ury_order.sync_order", payload

@@ -18,16 +18,19 @@ class OfflineSyncWorker(QThread):
         self.running = True
 
     def run(self):
-        while self.running:
-            self._sync_pending_invoices()
-            for _ in range(OFFLINE_SYNC_INTERVAL):
-                if not self.running:
-                    break
-                time.sleep(1)
+        try:
+            while self.running:
+                self._sync_pending_invoices()
+                for _ in range(OFFLINE_SYNC_INTERVAL):
+                    if not self.running:
+                        break
+                    time.sleep(1)
+        finally:
+            if not db.is_closed():
+                db.close()
 
     def _sync_pending_invoices(self):
         try:
-            db.connect(reuse_if_open=True)
             pending = PendingInvoice.select().where(PendingInvoice.status == "Pending")
 
             if not pending.exists():
@@ -52,9 +55,6 @@ class OfflineSyncWorker(QThread):
         except Exception as e:
             logger.error("Oflayn sinxronizatsiya xatosi: %s", e)
             self.sync_status.emit(f"Oflayn sinxronizatsiyada xatolik: {e}")
-        finally:
-            if not db.is_closed():
-                db.close()
 
     def stop(self):
         self.running = False

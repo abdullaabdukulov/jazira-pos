@@ -72,9 +72,9 @@ def initialize_db():
             except Exception as e:
                 logger.error("Migratsiya v%d xatosi: %s", version, e)
                 raise
-    finally:
-        if not db.is_closed():
-            db.close()
+    except Exception:
+        raise
+    # DB ochiq qoladi — ilova hayoti davomida yopilmaydi
 
 
 def _table_is_empty() -> bool:

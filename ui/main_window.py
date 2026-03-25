@@ -20,13 +20,14 @@ from ui.components.pos_opening import PosOpeningDialog
 from ui.components.pos_closing import PosClosingDialog
 from ui.components.pos_shifts_window import PosShiftsWindow
 from ui.components.dialogs import InfoDialog, ConfirmDialog
+from ui.scale import s, font
 
 logger = get_logger(__name__)
 
 
 class ConnectivityCheckWorker(QThread):
     """Server bilan aloqani tekshirish — background thread'da."""
-    finished = pyqtSignal(bool)
+    result_ready = pyqtSignal(bool)
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
@@ -35,9 +36,9 @@ class ConnectivityCheckWorker(QThread):
     def run(self):
         try:
             success, _ = self.api.call_method("frappe.auth.get_logged_user")
-            self.finished.emit(success)
+            self.result_ready.emit(success)
         except Exception:
-            self.finished.emit(False)
+            self.result_ready.emit(False)
 
 
 class PosOpeningCheckWorker(QThread):
@@ -47,50 +48,44 @@ class PosOpeningCheckWorker(QThread):
     1. Server bilan aloqa bor → server javobiga ishonish (lokal bazani sinxronlash)
     2. Server bilan aloqa yo'q → faqat shu holda lokal bazaga qarash
     """
-    finished = pyqtSignal(bool, str)  # has_opening, opening_entry_name
+    result_ready = pyqtSignal(bool, str)  # has_opening, opening_entry_name
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
 
     def run(self):
-        success, response = self.api.call_method("ury.ury_pos.api.checkPosOpening")
+        try:
+            success, response = self.api.call_method("ury.ury_pos.api.checkPosOpening")
 
-        if success and isinstance(response, dict):
-            # Server javob berdi — unga ishonish kerak
-            status = response.get("status")
-            if status == "open":
-                opening_entry = response.get("opening_entry", "")
-                self._sync_local_shift(opening_entry)
-                self.finished.emit(True, opening_entry)
-            else:
-                # Server: kassa yopiq — lokal bazani ham tozalash
-                self._close_local_shifts()
-                self.finished.emit(False, "")
-        else:
-            # Server bilan aloqa yo'q — faqat lokal bazaga qarash
-            try:
-                db.connect(reuse_if_open=True)
-                shift = PosShift.select().where(PosShift.status == "Open").first()
-                if shift:
-                    self.finished.emit(True, shift.opening_entry or "")
+            if success and isinstance(response, dict):
+                status = response.get("status")
+                if status == "open":
+                    opening_entry = response.get("opening_entry", "")
+                    self._sync_local_shift(opening_entry)
+                    self.result_ready.emit(True, opening_entry)
                 else:
-                    self.finished.emit(False, "")
-            except Exception:
-                self.finished.emit(False, "")
-            finally:
-                if not db.is_closed():
-                    db.close()
+                    self._close_local_shifts()
+                    self.result_ready.emit(False, "")
+            else:
+                try:
+                    shift = PosShift.select().where(PosShift.status == "Open").first()
+                    if shift:
+                        self.result_ready.emit(True, shift.opening_entry or "")
+                    else:
+                        self.result_ready.emit(False, "")
+                except Exception:
+                    self.result_ready.emit(False, "")
+        finally:
+            if not db.is_closed():
+                db.close()
 
     def _sync_local_shift(self, opening_entry: str):
-        """Server ochiq desa — lokal bazada ham ochiq shift bo'lishini ta'minlash."""
         try:
-            db.connect(reuse_if_open=True)
             existing = PosShift.select().where(
                 (PosShift.status == "Open") & (PosShift.opening_entry == opening_entry)
             ).first()
             if not existing:
-                # Eski ochiq shiftlarni yopish + yangi yaratish
                 PosShift.update(status="Closed").where(PosShift.status == "Open").execute()
                 PosShift.create(
                     opening_entry=opening_entry,
@@ -101,23 +96,15 @@ class PosOpeningCheckWorker(QThread):
                 )
         except Exception as e:
             logger.debug("Lokal shift sinxronlash: %s", e)
-        finally:
-            if not db.is_closed():
-                db.close()
 
     def _close_local_shifts(self):
-        """Server yopiq desa — lokal bazadagi barcha ochiq shiftlarni yopish."""
         try:
             import datetime
-            db.connect(reuse_if_open=True)
             PosShift.update(
                 status="Closed", closed_at=datetime.datetime.now()
             ).where(PosShift.status == "Open").execute()
         except Exception as e:
             logger.debug("Lokal shiftlarni yopish: %s", e)
-        finally:
-            if not db.is_closed():
-                db.close()
 
 
 class MainWindow(QMainWindow):
@@ -126,9 +113,8 @@ class MainWindow(QMainWindow):
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
-        self.opening_entry = None  # Ochiq kassa nomi
+        self.opening_entry = None
         self.setWindowTitle("Jazira POS")
-        self.showMaximized()
 
         initialize_db()
 
@@ -138,26 +124,26 @@ class MainWindow(QMainWindow):
 
         # --- Top Bar ---
         top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(10, 4, 10, 4)
-        top_bar.setSpacing(12)
+        top_bar.setContentsMargins(s(10), s(4), s(10), s(4))
+        top_bar.setSpacing(s(12))
 
         # ── Jazira Brand Logo ──────────────────
         logo_widget = QWidget()
-        logo_widget.setFixedWidth(200)
-        logo_widget.setStyleSheet("""
-            QWidget {
+        logo_widget.setFixedWidth(s(200))
+        logo_widget.setStyleSheet(f"""
+            QWidget {{
                 background: transparent;
-                border-left: 4px solid #f59e0b;
-                padding-left: 10px;
-            }
+                border-left: {s(4)}px solid #f59e0b;
+                padding-left: {s(10)}px;
+            }}
         """)
         logo_layout = QVBoxLayout(logo_widget)
-        logo_layout.setContentsMargins(10, 2, 0, 2)
+        logo_layout.setContentsMargins(s(10), s(2), 0, s(2))
         logo_layout.setSpacing(0)
 
         brand_name = QLabel("Jazira°")
-        brand_name.setStyleSheet("""
-            font-size: 26px;
+        brand_name.setStyleSheet(f"""
+            font-size: {font(26)}px;
             font-weight: 900;
             font-style: italic;
             color: #d97706;
@@ -165,8 +151,8 @@ class MainWindow(QMainWindow):
         """)
 
         brand_sub = QLabel("DONER & SHAWERMA")
-        brand_sub.setStyleSheet("""
-            font-size: 8px;
+        brand_sub.setStyleSheet(f"""
+            font-size: {font(8)}px;
             font-weight: 700;
             color: #92400e;
             background: transparent;
@@ -187,12 +173,13 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.company_badge)
 
         # Connection Status
+        _dot = s(12)
         self.status_dot = QLabel()
-        self.status_dot.setFixedSize(12, 12)
-        self.status_dot.setStyleSheet("background-color: #94a3b8; border-radius: 6px;")
+        self.status_dot.setFixedSize(_dot, _dot)
+        self.status_dot.setStyleSheet(f"background-color: #94a3b8; border-radius: {_dot // 2}px;")
 
         self.status_text = QLabel("Checking...")
-        self.status_text.setStyleSheet("font-weight: bold; color: #64748b; font-size: 13px;")
+        self.status_text.setStyleSheet(f"font-weight: bold; color: #64748b; font-size: {font(13)}px;")
 
         top_bar.addWidget(self.status_dot)
         top_bar.addWidget(self.status_text)
@@ -202,14 +189,14 @@ class MainWindow(QMainWindow):
         def _tb_btn(label: str, bg: str, color: str = "white",
                     hover: str = "", border: str = "none") -> QPushButton:
             b = QPushButton(label)
-            b.setFixedHeight(48)
+            b.setFixedHeight(s(48))
             h = hover or bg
             b.setStyleSheet(f"""
                 QPushButton {{
                     background: {bg}; color: {color};
-                    font-weight: 700; font-size: 13px;
-                    border-radius: 10px; border: {border};
-                    padding: 0 16px;
+                    font-weight: 700; font-size: {font(13)}px;
+                    border-radius: {s(10)}px; border: {border};
+                    padding: 0 {s(16)}px;
                 }}
                 QPushButton:hover {{ background: {h}; }}
                 QPushButton:pressed {{ opacity: 0.85; }}
@@ -217,50 +204,43 @@ class MainWindow(QMainWindow):
             """)
             return b
 
-        # Offline Queue Button — neutral pill
+        # Offline Queue Button
         self.offline_btn = _tb_btn(
-            "📦  Offline: 0", "#f1f5f9", "#374151",
+            "Offline: 0", "#f1f5f9", "#374151",
             hover="#e2e8f0", border="1px solid #e2e8f0",
         )
         self.offline_btn.clicked.connect(self.show_offline_queue)
         top_bar.addWidget(self.offline_btn)
 
-        # New Sale Button — green accent
+        # New Sale Button
         self.add_sale_btn = _tb_btn(
-            "＋  Yangi sotuv", "#22c55e", hover="#16a34a",
+            "+  Yangi sotuv", "#22c55e", hover="#16a34a",
         )
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
         top_bar.addWidget(self.add_sale_btn)
 
-        # History Button — indigo pill
+        # History Button
         self.history_btn = _tb_btn(
-            "🕐  Tarix", "#6366f1", hover="#4338ca",
+            "Tarix", "#6366f1", hover="#4338ca",
         )
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
 
-        # Sync Button — blue
+        # Sync Button
         self.sync_btn = _tb_btn(
-            "⟳  Sinxronlash", "#3b82f6", hover="#2563eb",
+            "Sinxronlash", "#3b82f6", hover="#2563eb",
         )
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
 
-        # Printer Settings Button — slate
-        self.printer_btn = _tb_btn(
-            "Printer", "#475569", hover="#334155",
-        )
-        self.printer_btn.clicked.connect(self.show_printer_settings)
-        top_bar.addWidget(self.printer_btn)
-
-        # Kassa tarixi Button — slate
+        # Kassa tarixi Button
         self.shifts_btn = _tb_btn(
             "Kassa tarixi", "#475569", hover="#334155",
         )
         self.shifts_btn.clicked.connect(self.show_shifts_history)
         top_bar.addWidget(self.shifts_btn)
 
-        # Kassa ochish Button — green (kassa ochilmagan holatda ko'rinadi)
+        # Kassa ochish Button
         self.open_shift_btn = _tb_btn(
             "Kassa ochish", "#16a34a", hover="#15803d",
         )
@@ -268,23 +248,23 @@ class MainWindow(QMainWindow):
         self.open_shift_btn.setVisible(False)
         top_bar.addWidget(self.open_shift_btn)
 
-        # Kassa yopish Button — orange/red
+        # Kassa yopish Button
         self.close_shift_btn = _tb_btn(
             "Kassa yopish", "#dc2626", hover="#b91c1c",
         )
         self.close_shift_btn.clicked.connect(self.show_pos_closing)
         top_bar.addWidget(self.close_shift_btn)
 
-        # Logout Button — amber
+        # Logout Button
         self.logout_btn = _tb_btn(
-            "🔓  Chiqish", "#f59e0b", hover="#d97706",
+            "Chiqish", "#f59e0b", hover="#d97706",
         )
         self.logout_btn.clicked.connect(self.request_logout)
         top_bar.addWidget(self.logout_btn)
 
-        # Exit Button — red
+        # Exit Button
         self.exit_btn = _tb_btn(
-            "✕  Dasturdan chiqish", "#ef4444", hover="#dc2626",
+            "Dasturdan chiqish", "#ef4444", hover="#dc2626",
         )
         self.exit_btn.clicked.connect(self.request_exit)
         top_bar.addWidget(self.exit_btn)
@@ -303,51 +283,49 @@ class MainWindow(QMainWindow):
         self.sales_tabs.setTabsClosable(True)
         self.sales_tabs.setMovable(True)
         self.sales_tabs.tabCloseRequested.connect(self.close_sale_tab)
-        self.sales_tabs.setStyleSheet("""
-            QTabWidget::pane {
+        self.sales_tabs.setStyleSheet(f"""
+            QTabWidget::pane {{
                 border: none;
                 background: #ffffff;
-                border-radius: 12px;
+                border-radius: {s(12)}px;
                 margin-top: -1px;
-            }
+            }}
 
-            QTabBar::tab {
+            QTabBar::tab {{
                 background: #f1f5f9;
                 color: #64748b;
-                padding: 11px 22px;
+                padding: {s(11)}px {s(22)}px;
                 font-weight: 600;
-                font-size: 13px;
-                border-radius: 10px 10px 0 0;
-                margin-right: 4px;
+                font-size: {font(13)}px;
+                border-radius: {s(10)}px {s(10)}px 0 0;
+                margin-right: {s(4)}px;
                 border: 1px solid #e2e8f0;
                 border-bottom: none;
-                min-width: 95px;
-            }
-            QTabBar::tab:selected {
+                min-width: {s(95)}px;
+            }}
+            QTabBar::tab:selected {{
                 background: #ffffff;
                 color: #1d4ed8;
                 border-color: #bfdbfe;
                 border-bottom: 3px solid #3b82f6;
                 font-weight: 700;
-            }
-            QTabBar::tab:hover:!selected {
+            }}
+            QTabBar::tab:hover:!selected {{
                 background: #e8f0fe;
                 color: #1d4ed8;
-            }
+            }}
         """)
 
-
         splitter.addWidget(self.sales_tabs)
-
-        splitter.setSizes([600, 500])
+        splitter.setSizes([s(600), s(500)])
 
         main_layout.addWidget(splitter, stretch=1)
 
         # ── Inline History Panel (hidden by default) ──
         self.history_panel = HistoryWindow(self.api, self)
         self.history_panel.setVisible(False)
-        self.history_panel.setMinimumHeight(360)
-        self.history_panel.setMaximumHeight(500)
+        self.history_panel.setMinimumHeight(s(360))
+        self.history_panel.setMaximumHeight(s(500))
         self.history_panel.setStyleSheet("""
             background: white;
             border-top: 2px solid #e2e8f0;
@@ -357,8 +335,8 @@ class MainWindow(QMainWindow):
         # ── Inline Shifts Panel (hidden by default) ──
         self.shifts_panel = PosShiftsWindow(self.api, self)
         self.shifts_panel.setVisible(False)
-        self.shifts_panel.setMinimumHeight(300)
-        self.shifts_panel.setMaximumHeight(450)
+        self.shifts_panel.setMinimumHeight(s(300))
+        self.shifts_panel.setMaximumHeight(s(450))
         self.shifts_panel.setStyleSheet("""
             background: white;
             border-top: 2px solid #e2e8f0;
@@ -372,25 +350,24 @@ class MainWindow(QMainWindow):
         # Initial Sale Tab
         self.add_new_sale_tab()
 
+        # Workers — kechiktirilgan ishga tushirish (GUI to'liq tayyor bo'lishi uchun)
+        QTimer.singleShot(500, self._start_background_workers)
 
-        # Workers - Shared API beriladi
+    def _start_background_workers(self):
         self.sync_worker = SyncWorker(self.api)
         self.sync_worker.progress_update.connect(self.update_status)
         self.sync_worker.sync_finished.connect(self.on_sync_finished)
-        self._auto_sync = True  # birinchi sinxronizatsiya dialog ko'rsatmasin
-        self.sync_worker.start()  # Login dan keyin avtomatik sinxronizatsiya
+        self._auto_sync = True
+        self.sync_worker.start()
 
         self.offline_sync_worker = OfflineSyncWorker(self.api)
         self.offline_sync_worker.sync_status.connect(self.update_status)
         self.offline_sync_worker.start()
 
-        # Monitor timer
         self.monitor_timer = QTimer()
         self.monitor_timer.timeout.connect(self.monitor_system)
         self.monitor_timer.start(MONITOR_INTERVAL_MS)
-        self.monitor_system()
 
-        # POS Opening check — kassa ochiqligini tekshirish
         self._check_pos_opening()
 
     def request_exit(self):
@@ -414,11 +391,11 @@ class MainWindow(QMainWindow):
 
     def _update_company_badge(self, company: str = "", pos_profile: str = ""):
         display = company or pos_profile or "—"
-        self.company_badge.setText(f"🏢  {display}")
-        self.company_badge.setStyleSheet("""
-            font-size: 12px; font-weight: 700; color: #1e40af;
+        self.company_badge.setText(display)
+        self.company_badge.setStyleSheet(f"""
+            font-size: {font(12)}px; font-weight: 700; color: #1e40af;
             background: #eff6ff; border: 1.5px solid #bfdbfe;
-            border-radius: 8px; padding: 4px 12px;
+            border-radius: {s(8)}px; padding: {s(4)}px {s(12)}px;
         """)
 
     def monitor_system(self):
@@ -426,44 +403,40 @@ class MainWindow(QMainWindow):
         self._update_offline_queue_count()
 
     def _check_server_status(self):
-        # Background thread'da tekshirish — GUI muzlamasligi uchun
         if hasattr(self, '_connectivity_worker') and self._connectivity_worker.isRunning():
-            return  # oldingi tekshiruv hali tugamagan
+            return
         self._connectivity_worker = ConnectivityCheckWorker(self.api)
-        self._connectivity_worker.finished.connect(self._update_connectivity_ui)
+        self._connectivity_worker.result_ready.connect(self._update_connectivity_ui)
         self._connectivity_worker.start()
 
     def _update_connectivity_ui(self, is_online: bool):
+        _dot = s(12)
         if is_online:
-            self.status_dot.setStyleSheet("background-color: #10b981; border-radius: 6px;")
+            self.status_dot.setStyleSheet(f"background-color: #10b981; border-radius: {_dot // 2}px;")
             self.status_text.setText("ONLINE")
-            self.status_text.setStyleSheet("font-weight: bold; color: #10b981; font-size: 13px;")
+            self.status_text.setStyleSheet(f"font-weight: bold; color: #10b981; font-size: {font(13)}px;")
         else:
-            self.status_dot.setStyleSheet("background-color: #ef4444; border-radius: 6px;")
+            self.status_dot.setStyleSheet(f"background-color: #ef4444; border-radius: {_dot // 2}px;")
             self.status_text.setText("OFFLINE")
-            self.status_text.setStyleSheet("font-weight: bold; color: #ef4444; font-size: 13px;")
+            self.status_text.setStyleSheet(f"font-weight: bold; color: #ef4444; font-size: {font(13)}px;")
 
     def _update_offline_queue_count(self):
         try:
-            db.connect(reuse_if_open=True)
             count = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
             self.offline_btn.setText(f"Offline: {count}")
 
             if count > 0:
-                self.offline_btn.setStyleSheet("""
-                    QPushButton { padding: 12px 20px; background-color: #fff7ed; color: #ea580c;
-                    font-weight: bold; font-size: 14px; border-radius: 8px; border: 2px solid #f97316; }
+                self.offline_btn.setStyleSheet(f"""
+                    QPushButton {{ padding: {s(12)}px {s(20)}px; background-color: #fff7ed; color: #ea580c;
+                    font-weight: bold; font-size: {font(14)}px; border-radius: {s(8)}px; border: 2px solid #f97316; }}
                 """)
             else:
-                self.offline_btn.setStyleSheet("""
-                    QPushButton { padding: 12px 20px; background-color: #f3f4f6; color: #374151;
-                    font-weight: bold; font-size: 14px; border-radius: 8px; border: 1px solid #d1d5db; }
+                self.offline_btn.setStyleSheet(f"""
+                    QPushButton {{ padding: {s(12)}px {s(20)}px; background-color: #f3f4f6; color: #374151;
+                    font-weight: bold; font-size: {font(14)}px; border-radius: {s(8)}px; border: 1px solid #d1d5db; }}
                 """)
         except Exception as e:
             logger.debug("Offline queue count xatosi: %s", e)
-        finally:
-            if not db.is_closed():
-                db.close()
 
     def show_offline_queue(self):
         dialog = OfflineQueueWindow(self)
@@ -499,7 +472,6 @@ class MainWindow(QMainWindow):
             active_cart.add_item(item_code, item_name, price, currency)
 
     def on_checkout(self, order_data: dict):
-        # CheckoutWindow ham shared API ishlatadi
         dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)
         dialog.exec()
@@ -510,45 +482,45 @@ class MainWindow(QMainWindow):
             active_cart.clear_cart()
         self._update_offline_queue_count()
 
-    def show_printer_settings(self):
-        from ui.components.printer_settings import PrinterSettingsDialog
-        dlg = PrinterSettingsDialog(self, self.api)
-        dlg.exec()
-
     def show_shifts_history(self):
         visible = self.shifts_panel.isVisible()
         if visible:
             self.shifts_panel.setVisible(False)
         else:
-            # Tarix panelini yopish (ikkalasi bir vaqtda ochilmasin)
             self.history_panel.setVisible(False)
             self.shifts_panel.setVisible(True)
             self.shifts_panel.load_shifts()
 
     def show_history(self):
-        # Kassa tarixi panelini yopish
         self.shifts_panel.setVisible(False)
         visible = self.history_panel.isVisible()
         if visible:
             self.history_panel.setVisible(False)
-            self.history_btn.setStyleSheet(
-                "padding: 12px 20px; background-color: #6366f1; color: white; "
-                "font-weight: bold; border-radius: 8px; margin-left: 10px;"
-            )
+            self.history_btn.setStyleSheet(f"""
+                padding: {s(12)}px {s(20)}px; background-color: #6366f1; color: white;
+                font-weight: bold; border-radius: {s(8)}px; margin-left: {s(10)}px;
+            """)
         else:
             self.history_panel.opening_entry = self.opening_entry or ""
             self.history_panel.setVisible(True)
             self.history_panel.load_history()
-            self.history_btn.setStyleSheet(
-                "padding: 12px 20px; background-color: #4338ca; color: white; "
-                "font-weight: bold; border-radius: 8px; margin-left: 10px;"
-                "border: 2px solid #818cf8;"
-            )
+            self.history_btn.setStyleSheet(f"""
+                padding: {s(12)}px {s(20)}px; background-color: #4338ca; color: white;
+                font-weight: bold; border-radius: {s(8)}px; margin-left: {s(10)}px;
+                border: 2px solid #818cf8;
+            """)
 
     def start_sync(self):
+        if hasattr(self, 'sync_worker') and self.sync_worker.isRunning():
+            self.status_label.setText("Sinxronizatsiya hali davom etmoqda...")
+            return
         self.sync_btn.setEnabled(False)
-        self._auto_sync = False  # qo'lda bosdi — dialog ko'rsatilsin
+        self._auto_sync = False
         self.status_label.setText("Sinxronizatsiya boshlandi...")
+        # QThread qayta ishlatilmaydi — yangi instance yaratamiz
+        self.sync_worker = SyncWorker(self.api)
+        self.sync_worker.progress_update.connect(self.update_status)
+        self.sync_worker.sync_finished.connect(self.on_sync_finished)
         self.sync_worker.start()
 
     def update_status(self, message: str):
@@ -556,12 +528,10 @@ class MainWindow(QMainWindow):
 
     def on_sync_finished(self, success: bool, message: str):
         self.sync_btn.setEnabled(True)
-        # Filial nomini yangilash
         cfg = load_config()
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
         if success:
             self.item_browser.load_items()
-        # Avtomatik sinxronizatsiyada dialog ko'rsatmaymiz
         if self._auto_sync:
             self._auto_sync = False
             if not success:
@@ -576,10 +546,9 @@ class MainWindow(QMainWindow):
 
     # ── POS Opening / Closing ──────────────────────────────
     def _check_pos_opening(self):
-        """Login dan keyin kassa ochiqligini tekshirish."""
         self._set_pos_enabled(False)
         self.opening_check_worker = PosOpeningCheckWorker(self.api)
-        self.opening_check_worker.finished.connect(self._on_opening_check_done)
+        self.opening_check_worker.result_ready.connect(self._on_opening_check_done)
         self.opening_check_worker.start()
 
     def _on_opening_check_done(self, has_opening: bool, opening_entry: str):
@@ -598,11 +567,9 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_opening_exit(self):
-        """Kassa ochish dialogidan chiqish — dasturni yopish."""
         self.close()
 
     def _on_opening_logout(self):
-        """Kassa ochish dialogidan logout — boshqa kassir kirishi uchun."""
         self.logout_requested.emit()
 
     def _on_pos_opened(self, opening_entry: str):
@@ -637,18 +604,15 @@ class MainWindow(QMainWindow):
         self._set_pos_enabled(False)
         self.status_label.setText("Kassa yopildi.")
 
-        # Muvaffaqiyat xabari
         InfoDialog(
             self, "Kassa yopildi",
             "Kassa muvaffaqiyatli yopildi.\nDavom etish uchun yangi kassa oching.",
             kind="success",
         ).exec()
 
-        # Yangi kassa ochish dialogini ko'rsatish
         self._show_pos_opening_dialog()
 
     def _set_pos_enabled(self, enabled: bool):
-        """Kassa ochiq/yopiq holatiga qarab UI elementlarini boshqarish."""
         self.add_sale_btn.setEnabled(enabled)
         self.close_shift_btn.setEnabled(enabled)
         self.open_shift_btn.setVisible(not enabled)
@@ -658,7 +622,21 @@ class MainWindow(QMainWindow):
             self.sales_tabs.setEnabled(enabled)
 
     def closeEvent(self, event):
-        self.monitor_timer.stop()
-        self.offline_sync_worker.stop()
-        self.offline_sync_worker.wait(2000)  # max 2 sek kutish
+        if hasattr(self, 'monitor_timer'):
+            self.monitor_timer.stop()
+        if hasattr(self, 'offline_sync_worker'):
+            self.offline_sync_worker.stop()
+            self.offline_sync_worker.wait(3000)
+        if hasattr(self, 'sync_worker') and self.sync_worker.isRunning():
+            self.sync_worker.quit()
+            self.sync_worker.wait(3000)
+        if hasattr(self, '_connectivity_worker') and self._connectivity_worker.isRunning():
+            self._connectivity_worker.quit()
+            self._connectivity_worker.wait(2000)
+        if hasattr(self, 'opening_check_worker') and self.opening_check_worker.isRunning():
+            self.opening_check_worker.quit()
+            self.opening_check_worker.wait(2000)
+        # DB ni yopish — ilova hayoti tugadi
+        if not db.is_closed():
+            db.close()
         super().closeEvent(event)

@@ -20,20 +20,29 @@ class SyncWorker(QThread):
     def run(self):
         try:
             self.progress_update.emit("Ma'lumotlar bazasi tekshirilmoqda...")
-            db.connect(reuse_if_open=True)
 
             self._sync_pending_invoices()
             logged_user = self._get_logged_user()
             self._sync_pos_profile(logged_user)
-            self._sync_production_units()
+            self._sync_printer_config()
             self._sync_items()
             self._sync_customers()
 
-            self.sync_finished.emit(True, "Sinxronizatsiya muvaffaqiyatli yakunlandi!")
+            warnings = []
+            config = load_config()
+            if not config.get("pos_profile"):
+                warnings.append("POS profil topilmadi")
+
+            if warnings:
+                self.sync_finished.emit(True, "Sinxronizatsiya yakunlandi (ogohlantirishlar: " + "; ".join(warnings) + ")")
+            else:
+                self.sync_finished.emit(True, "Sinxronizatsiya muvaffaqiyatli yakunlandi!")
         except Exception as e:
             logger.error("Sinxronizatsiya xatosi: %s", e)
             self.sync_finished.emit(False, str(e))
         finally:
+            # Worker thread tugayotganda o'z DB ulanishini yopish
+            # (boshqa threadlarga ta'sir qilmaydi — har bir thread o'z ulanishiga ega)
             if not db.is_closed():
                 db.close()
 
@@ -98,6 +107,7 @@ class SyncWorker(QThread):
 
         if not success or not isinstance(menu_data, dict):
             logger.warning("Menu ma'lumotlari olinmadi")
+            self.progress_update.emit("Tovarlar olinmadi — o'tkazib yuborildi")
             return
 
         items = menu_data.get("items", [])
@@ -168,69 +178,38 @@ class SyncWorker(QThread):
 
         logger.info("%d ta mijoz sinxronizatsiya qilindi", len(customers))
 
-    def _sync_production_units(self):
-        """Serverdan production unitlarni sinxronizatsiya qilish.
+    def _sync_printer_config(self):
+        """Serverdan printer konfiguratsiyasini sinxronizatsiya qilish.
 
-        Har bir unit o'z item_groups va printer sozlamalariga ega.
-        Lokal printer_device sozlamalari saqlanadi.
+        Bitta API chaqiruv orqali:
+        - QZ Tray sozlamalari (qz_print, qz_host, customer_qz_printer)
+        - Production unitlar (har biri qz_printer_name va item_groups bilan)
         """
         config = load_config()
         pos_profile = config.get("pos_profile")
         if not pos_profile:
-            logger.warning("POS profile topilmadi — production unit sinx o'tkazib yuborildi")
+            logger.warning("POS profile topilmadi — printer config sinx o'tkazib yuborildi")
             return
 
-        self.progress_update.emit("Production unitlar yuklanmoqda...")
+        self.progress_update.emit("Printer sozlamalari yuklanmoqda...")
 
-        success, units = self.api.call_method("frappe.client.get_list", {
-            "doctype": "URY Production Unit",
-            "filters": {"pos_profile": pos_profile},
-            "fields": ["name", "production"],
-            "limit_page_length": 50,
-        })
+        success, result = self.api.call_method(
+            "ury.ury_pos.api.get_printer_config",
+            {"pos_profile": pos_profile}
+        )
 
-        if not success or not isinstance(units, list):
-            logger.warning("Production unitlarni olib bo'lmadi")
+        if not success or not isinstance(result, dict):
+            logger.warning("Printer konfiguratsiyasini olib bo'lmadi")
             return
 
-        if not units:
-            logger.info("Bu filialda production unit yo'q")
-            return
-
-        # Mavjud lokal printer sozlamalarini saqlash (device/win_name)
-        existing = config.get("production_units", [])
-        existing_printers = {
-            u.get("name", ""): {
-                "printer_device": u.get("printer_device", ""),
-                "printer_win_name": u.get("printer_win_name", ""),
-            }
-            for u in existing
+        # QZ Tray sozlamalarini config ga saqlash
+        printer_config = {
+            "qz_print": result.get("qz_print", 0),
+            "qz_host": result.get("qz_host", "localhost"),
+            "customer_qz_printer": result.get("customer_qz_printer", ""),
+            "production_units": result.get("production_units", []),
         }
 
-        production_units = []
-        for unit in units:
-            unit_name = unit.get("production", unit.get("name", ""))
-
-            # Har bir unit uchun item_groups olish
-            success2, unit_doc = self.api.call_method(
-                "frappe.client.get",
-                {"doctype": "URY Production Unit", "name": unit["name"]}
-            )
-            item_groups = []
-            if success2 and isinstance(unit_doc, dict):
-                item_groups = [
-                    ig.get("item_group", "")
-                    for ig in unit_doc.get("item_groups", [])
-                    if ig.get("item_group")
-                ]
-
-            existing_printer = existing_printers.get(unit_name, {})
-            production_units.append({
-                "name": unit_name,
-                "item_groups": item_groups,
-                "printer_device": existing_printer.get("printer_device", ""),
-                "printer_win_name": existing_printer.get("printer_win_name", ""),
-            })
-
-        save_config({"production_units": production_units})
-        logger.info("%d ta production unit sinxronizatsiya qilindi", len(production_units))
+        save_config(printer_config)
+        units_count = len(printer_config["production_units"])
+        logger.info("Printer config sinxronizatsiya qilindi: %d ta production unit", units_count)

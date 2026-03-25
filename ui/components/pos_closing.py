@@ -11,13 +11,14 @@ from core.logger import get_logger
 from database.models import PosShift, db
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
+from ui.scale import s, font
 
 logger = get_logger(__name__)
 
 
 class ClosingDataWorker(QThread):
     """Serverdan kassa yopish ma'lumotlarini olish."""
-    finished = pyqtSignal(bool, object)  # success, data
+    result_ready = pyqtSignal(bool, object)  # success, data
 
     def __init__(self, api: FrappeAPI, opening_entry: str):
         super().__init__()
@@ -30,14 +31,14 @@ class ClosingDataWorker(QThread):
             {"pos_opening_entry": self.opening_entry},
         )
         if success and isinstance(response, dict):
-            self.finished.emit(True, response)
+            self.result_ready.emit(True, response)
         else:
-            self.finished.emit(False, response)
+            self.result_ready.emit(False, response)
 
 
 class ClosingWorker(QThread):
     """Kassani yopish — POS Closing Entry yaratish."""
-    finished = pyqtSignal(bool, str)
+    result_ready = pyqtSignal(bool, str)
 
     def __init__(self, api: FrappeAPI, opening_entry: str, payment_reconciliation: list):
         super().__init__()
@@ -46,22 +47,25 @@ class ClosingWorker(QThread):
         self.payment_reconciliation = payment_reconciliation
 
     def run(self):
-        success, response = self.api.call_method(
-            "ury.ury_pos.api.createPosClosing",
-            {
-                "pos_opening_entry": self.opening_entry,
-                "payment_reconciliation": json.dumps(self.payment_reconciliation),
-            },
-        )
-        if success and isinstance(response, dict):
-            self._close_local_shift()
-            self.finished.emit(True, f"Kassa yopildi: {response.get('name', '')}")
-        else:
-            self.finished.emit(False, f"Kassa yopishda xatolik: {response}")
+        try:
+            success, response = self.api.call_method(
+                "ury.ury_pos.api.createPosClosing",
+                {
+                    "pos_opening_entry": self.opening_entry,
+                    "payment_reconciliation": json.dumps(self.payment_reconciliation),
+                },
+            )
+            if success and isinstance(response, dict):
+                self._close_local_shift()
+                self.result_ready.emit(True, f"Kassa yopildi: {response.get('name', '')}")
+            else:
+                self.result_ready.emit(False, f"Kassa yopishda xatolik: {response}")
+        finally:
+            if not db.is_closed():
+                db.close()
 
     def _close_local_shift(self):
         try:
-            db.connect(reuse_if_open=True)
             import datetime
             PosShift.update(
                 status="Closed",
@@ -69,9 +73,6 @@ class ClosingWorker(QThread):
             ).where(PosShift.status == "Open").execute()
         except Exception as e:
             logger.error("Lokal shift yopishda xatolik: %s", e)
-        finally:
-            if not db.is_closed():
-                db.close()
 
 
 class PosClosingDialog(QDialog):
@@ -95,35 +96,49 @@ class PosClosingDialog(QDialog):
             c_geo.moveCenter(p_geo.center())
             self.move(c_geo.topLeft())
 
+    @staticmethod
+    def _active_input_style():
+        return (
+            f"padding: {s(8)}px {s(12)}px; font-size: {font(16)}px; font-weight: 700; "
+            f"border: 2px solid #3b82f6; border-radius: {s(10)}px; background: #eff6ff; color: #1e293b;"
+        )
+
+    @staticmethod
+    def _normal_input_style():
+        return (
+            f"padding: {s(8)}px {s(12)}px; font-size: {font(16)}px; font-weight: 700; "
+            f"border: 1.5px solid #e2e8f0; border-radius: {s(10)}px; background: white; color: #1e293b;"
+        )
+
     def init_ui(self):
         self.setWindowTitle("Kassa yopish")
-        self.setFixedSize(820, 600)
+        self.setFixedSize(s(820), s(600))
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
 
         main_h = QHBoxLayout(self)
-        main_h.setContentsMargins(20, 20, 20, 20)
-        main_h.setSpacing(20)
+        main_h.setContentsMargins(s(20), s(20), s(20), s(20))
+        main_h.setSpacing(s(20))
 
         # ── LEFT PANEL ───────────────────────────
         left = QWidget()
         self.left_layout = QVBoxLayout(left)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.setSpacing(12)
+        self.left_layout.setSpacing(s(12))
 
         # Header
         header = QFrame()
-        header.setStyleSheet("background: #7c2d12; border-radius: 10px; padding: 15px;")
+        header.setStyleSheet(f"background: #7c2d12; border-radius: {s(10)}px; padding: {s(15)}px;")
         h_layout = QVBoxLayout(header)
 
         title = QLabel("KASSA YOPISH")
-        title.setStyleSheet("color: #fed7aa; font-size: 11px; font-weight: 700; letter-spacing: 2px;")
+        title.setStyleSheet(f"color: #fed7aa; font-size: {font(11)}px; font-weight: 700; letter-spacing: 2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(title)
 
         self.info_label = QLabel("Ma'lumotlar yuklanmoqda...")
-        self.info_label.setStyleSheet("color: white; font-size: 14px; font-weight: 600;")
+        self.info_label.setStyleSheet(f"color: white; font-size: {font(14)}px; font-weight: 600;")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(self.info_label)
 
@@ -131,7 +146,7 @@ class PosClosingDialog(QDialog):
 
         # Loading label
         self.loading_label = QLabel("Serverdan ma'lumotlar olinmoqda...")
-        self.loading_label.setStyleSheet("font-size: 14px; color: #64748b; padding: 20px;")
+        self.loading_label.setStyleSheet(f"font-size: {font(14)}px; color: #64748b; padding: {s(20)}px;")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.left_layout.addWidget(self.loading_label)
 
@@ -150,27 +165,27 @@ class PosClosingDialog(QDialog):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(s(10))
 
         btn_cancel = QPushButton("Bekor")
-        btn_cancel.setFixedHeight(52)
-        btn_cancel.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
+        btn_cancel.setFixedHeight(s(52))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{ background: #f1f5f9; color: #64748b;
+                font-weight: 700; font-size: {font(14)}px; border-radius: {s(12)}px; border: none; }}
+            QPushButton:hover {{ background: #e2e8f0; }}
         """)
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_close = QPushButton("KASSANI YOPISH")
-        self.btn_close.setFixedHeight(52)
+        self.btn_close.setFixedHeight(s(52))
         self.btn_close.setEnabled(False)
-        self.btn_close.setStyleSheet("""
-            QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        self.btn_close.setStyleSheet(f"""
+            QPushButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 #dc2626, stop:1 #b91c1c);
-                color: white; font-weight: 800; font-size: 15px;
-                border-radius: 12px; border: none; }
-            QPushButton:hover { background: #991b1b; }
-            QPushButton:disabled { background: #fca5a5; color: #fecaca; }
+                color: white; font-weight: 800; font-size: {font(15)}px;
+                border-radius: {s(12)}px; border: none; }}
+            QPushButton:hover {{ background: #991b1b; }}
+            QPushButton:disabled {{ background: #fca5a5; color: #fecaca; }}
         """)
         self.btn_close.clicked.connect(self._process_closing)
 
@@ -182,14 +197,14 @@ class PosClosingDialog(QDialog):
 
         # ── RIGHT PANEL — Numpad ─────────────
         right = QWidget()
-        right.setStyleSheet("background: #f8fafc; border-radius: 14px;")
+        right.setStyleSheet(f"background: #f8fafc; border-radius: {s(14)}px;")
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(12, 12, 12, 12)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(s(12), s(12), s(12), s(12))
+        right_layout.setSpacing(s(10))
 
         numpad_lbl = QLabel("YOPISH SUMMASI")
         numpad_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
+            f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
         )
         right_layout.addWidget(numpad_lbl)
 
@@ -206,7 +221,7 @@ class PosClosingDialog(QDialog):
             return
 
         self.data_worker = ClosingDataWorker(self.api, self.opening_entry)
-        self.data_worker.finished.connect(self._on_data_loaded)
+        self.data_worker.result_ready.connect(self._on_data_loaded)
         self.data_worker.start()
 
     def _on_data_loaded(self, success: bool, data):
@@ -227,13 +242,13 @@ class PosClosingDialog(QDialog):
         # Build reconciliation form
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(8)
+        scroll_layout.setSpacing(s(8))
 
         col_header = QHBoxLayout()
-        for text, width in [("To'lov turi", 120), ("Kutilgan", 100), ("Haqiqiy", 130)]:
+        for text, width in [("To'lov turi", s(120)), ("Kutilgan", s(100)), ("Haqiqiy", s(130))]:
             lbl = QLabel(text)
             lbl.setFixedWidth(width)
-            lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
+            lbl.setStyleSheet(f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
             col_header.addWidget(lbl)
         col_header.addStretch()
         scroll_layout.addLayout(col_header)
@@ -245,36 +260,30 @@ class PosClosingDialog(QDialog):
             row = QHBoxLayout()
 
             lbl = QLabel(mop)
-            lbl.setFixedWidth(120)
-            lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #334155;")
+            lbl.setFixedWidth(s(120))
+            lbl.setStyleSheet(f"font-size: {font(13)}px; font-weight: 600; color: #334155;")
             row.addWidget(lbl)
 
             exp_lbl = QLabel(f"{expected:,.0f}".replace(",", " "))
-            exp_lbl.setFixedWidth(100)
-            exp_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #1e40af;")
+            exp_lbl.setFixedWidth(s(100))
+            exp_lbl.setStyleSheet(f"font-size: {font(14)}px; font-weight: 700; color: #1e40af;")
             row.addWidget(exp_lbl)
 
             inp = ClickableLineEdit()
             inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
             inp.setPlaceholderText("0")
             inp.setText(str(int(expected)))
-            inp.setFixedWidth(130)
-            inp.setFixedHeight(44)
+            inp.setFixedWidth(s(130))
+            inp.setFixedHeight(s(44))
             inp.setAlignment(Qt.AlignmentFlag.AlignRight)
             inp.clicked.connect(self._set_active_input)
             inp.textChanged.connect(self._update_difference)
 
             if idx == 0:
                 self.active_input = inp
-                inp.setStyleSheet(
-                    "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-                    "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-                )
+                inp.setStyleSheet(self._active_input_style())
             else:
-                inp.setStyleSheet(
-                    "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-                    "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-                )
+                inp.setStyleSheet(self._normal_input_style())
 
             row.addWidget(inp)
             row.addStretch()
@@ -288,15 +297,9 @@ class PosClosingDialog(QDialog):
 
     def _set_active_input(self, inp):
         if self.active_input:
-            self.active_input.setStyleSheet(
-                "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-                "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-            )
+            self.active_input.setStyleSheet(self._normal_input_style())
         self.active_input = inp
-        inp.setStyleSheet(
-            "padding: 8px 12px; font-size: 16px; font-weight: 700; "
-            "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-        )
+        inp.setStyleSheet(self._active_input_style())
         inp.setFocus()
 
     def _on_numpad_clicked(self, action: str):
@@ -330,13 +333,18 @@ class PosClosingDialog(QDialog):
         if total_diff == 0:
             self.diff_label.setText("Farq yo'q — hammasi to'g'ri")
             self.diff_label.setStyleSheet(
-                "font-size: 14px; font-weight: 700; color: #16a34a; padding: 6px;"
+                f"font-size: {font(14)}px; font-weight: 700; color: #16a34a; padding: {s(6)}px;"
             )
         else:
             self.diff_label.setText(f"Farq: {total_diff:,.0f} UZS".replace(",", " "))
             self.diff_label.setStyleSheet(
-                "font-size: 14px; font-weight: 700; color: #dc2626; padding: 6px;"
+                f"font-size: {font(14)}px; font-weight: 700; color: #dc2626; padding: {s(6)}px;"
             )
+
+    def reject(self):
+        if hasattr(self, 'closing_worker') and self.closing_worker.isRunning():
+            return  # Worker ishlayotganda dialog yopilmasin
+        super().reject()
 
     def _process_closing(self):
         self.btn_close.setEnabled(False)
@@ -359,7 +367,7 @@ class PosClosingDialog(QDialog):
             })
 
         self.closing_worker = ClosingWorker(self.api, self.opening_entry, payment_reconciliation)
-        self.closing_worker.finished.connect(self._on_closing_finished)
+        self.closing_worker.result_ready.connect(self._on_closing_finished)
         self.closing_worker.start()
 
     def _on_closing_finished(self, success: bool, message: str):

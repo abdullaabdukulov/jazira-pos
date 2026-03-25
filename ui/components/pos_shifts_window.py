@@ -9,12 +9,13 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
+from ui.scale import s, font
 
 logger = get_logger(__name__)
 
 
 class FetchShiftsWorker(QThread):
-    finished = pyqtSignal(bool, list)
+    result_ready = pyqtSignal(bool, list)
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
@@ -24,7 +25,7 @@ class FetchShiftsWorker(QThread):
         config = load_config()
         pos_profile = config.get("pos_profile", "")
         if not pos_profile:
-            self.finished.emit(False, [])
+            self.result_ready.emit(False, [])
             return
 
         data = self.api.fetch_data(
@@ -39,13 +40,13 @@ class FetchShiftsWorker(QThread):
 
         if data is not None:
             data.sort(key=lambda x: x.get("creation", ""), reverse=True)
-            self.finished.emit(True, data)
+            self.result_ready.emit(True, data)
         else:
-            self.finished.emit(False, [])
+            self.result_ready.emit(False, [])
 
 
 class FetchShiftDetailWorker(QThread):
-    finished = pyqtSignal(bool, dict, list)  # success, opening_doc, payments
+    result_ready = pyqtSignal(bool, dict, list)  # success, opening_doc, payments
 
     def __init__(self, api: FrappeAPI, opening_name: str):
         super().__init__()
@@ -58,7 +59,7 @@ class FetchShiftDetailWorker(QThread):
             {"doctype": "POS Opening Entry", "name": self.opening_name},
         )
         if not success or not isinstance(doc, dict):
-            self.finished.emit(False, {}, [])
+            self.result_ready.emit(False, {}, [])
             return
 
         # Closing entry bormi tekshirish
@@ -81,7 +82,7 @@ class FetchShiftDetailWorker(QThread):
             if closing_success and isinstance(closing_doc, dict):
                 payments = closing_doc.get("payment_reconciliation", [])
 
-        self.finished.emit(True, doc, payments)
+        self.result_ready.emit(True, doc, payments)
 
 
 class ShiftDetailDialog(QDialog):
@@ -90,70 +91,70 @@ class ShiftDetailDialog(QDialog):
         self.api = api
         self.opening_name = opening_name
         self.setWindowTitle("Smena tafsilotlari")
-        self.setFixedSize(650, 700)
-        self.setStyleSheet("""
-            QDialog { background: #f8fafc; }
-            QLabel { background: transparent; border: none; }
-            QFrame { border: none; }
-            QScrollArea { border: none; background: transparent; }
-            QWidget#ScrollContent { background: transparent; }
+        self.setFixedSize(s(650), s(700))
+        self.setStyleSheet(f"""
+            QDialog {{ background: #f8fafc; }}
+            QLabel {{ background: transparent; border: none; }}
+            QFrame {{ border: none; }}
+            QScrollArea {{ border: none; background: transparent; }}
+            QWidget#ScrollContent {{ background: transparent; }}
         """)
         self._init_ui()
         self._load()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(s(20), s(20), s(20), s(20))
+        main_layout.setSpacing(s(15))
 
         # --- Header Card ---
         header_card = QFrame()
         header_card.setObjectName("HeaderCard")
-        header_card.setStyleSheet("""
-            QFrame#HeaderCard {
+        header_card.setStyleSheet(f"""
+            QFrame#HeaderCard {{
                 background: white;
-                border-radius: 12px;
+                border-radius: {s(12)}px;
                 border: 1px solid #e2e8f0;
-            }
+            }}
         """)
         header_layout = QVBoxLayout(header_card)
-        header_layout.setContentsMargins(20, 20, 20, 20)
+        header_layout.setContentsMargins(s(20), s(20), s(20), s(20))
 
         # Top row: ID and Status
         top_row = QHBoxLayout()
         self.id_lbl = QLabel(f"Smena: {self.opening_name}")
-        self.id_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #64748b;")
+        self.id_lbl.setStyleSheet(f"font-size: {font(16)}px; font-weight: bold; color: #64748b;")
         top_row.addWidget(self.id_lbl)
-        
+
         top_row.addStretch()
-        
+
         self.status_lbl = QLabel("Yuklanmoqda...")
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_lbl.setStyleSheet("""
-            QLabel {
-                padding: 6px 12px;
-                border-radius: 6px;
-                font-size: 14px;
+        self.status_lbl.setStyleSheet(f"""
+            QLabel {{
+                padding: {s(6)}px {s(12)}px;
+                border-radius: {s(6)}px;
+                font-size: {font(14)}px;
                 font-weight: bold;
                 background: #e2e8f0;
                 color: #475569;
-            }
+            }}
         """)
         top_row.addWidget(self.status_lbl)
         header_layout.addLayout(top_row)
 
-        header_layout.addSpacing(10)
+        header_layout.addSpacing(s(10))
 
         # Bottom row: User and Date
         bot_row = QHBoxLayout()
         self.user_lbl = QLabel("...")
-        self.user_lbl.setStyleSheet("font-size: 24px; font-weight: 900; color: #0f172a;")
+        self.user_lbl.setStyleSheet(f"font-size: {font(24)}px; font-weight: 900; color: #0f172a;")
         bot_row.addWidget(self.user_lbl)
 
         bot_row.addStretch()
 
         self.date_lbl = QLabel("...")
-        self.date_lbl.setStyleSheet("font-size: 16px; font-weight: 500; color: #475569;")
+        self.date_lbl.setStyleSheet(f"font-size: {font(16)}px; font-weight: 500; color: #475569;")
         bot_row.addWidget(self.date_lbl)
         header_layout.addLayout(bot_row)
 
@@ -163,40 +164,40 @@ class ShiftDetailDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setObjectName("MainScroll")
-        
+
         self.content = QWidget()
         self.content.setObjectName("ScrollContent")
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout.setSpacing(15)
+        self.content_layout.setSpacing(s(15))
         self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+
         scroll.setWidget(self.content)
         main_layout.addWidget(scroll, 1)
 
         # --- Footer ---
         footer_layout = QHBoxLayout()
         footer_layout.addStretch()
-        
+
         close_btn = QPushButton("Yopish")
-        close_btn.setFixedSize(150, 45)
+        close_btn.setFixedSize(s(150), s(45))
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton { 
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: #cbd5e1; color: #334155;
-                font-weight: bold; font-size: 16px;
-                border-radius: 8px; border: none; 
-            }
-            QPushButton:hover { background: #94a3b8; color: white; }
+                font-weight: bold; font-size: {font(16)}px;
+                border-radius: {s(8)}px; border: none;
+            }}
+            QPushButton:hover {{ background: #94a3b8; color: white; }}
         """)
         close_btn.clicked.connect(self.close)
         footer_layout.addWidget(close_btn)
-        
+
         main_layout.addLayout(footer_layout)
 
     def _load(self):
         self.worker = FetchShiftDetailWorker(self.api, self.opening_name)
-        self.worker.finished.connect(self._on_loaded)
+        self.worker.result_ready.connect(self._on_loaded)
         self.worker.start()
 
     def _fmt(self, val):
@@ -205,26 +206,26 @@ class ShiftDetailDialog(QDialog):
     def _create_section_card(self, title: str):
         card = QFrame()
         card.setObjectName("SectionCard")
-        card.setStyleSheet("""
-            QFrame#SectionCard {
+        card.setStyleSheet(f"""
+            QFrame#SectionCard {{
                 background: white;
-                border-radius: 12px;
+                border-radius: {s(12)}px;
                 border: 1px solid #e2e8f0;
-            }
+            }}
         """)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
-        
+        layout.setContentsMargins(s(20), s(20), s(20), s(20))
+        layout.setSpacing(s(10))
+
         lbl = QLabel(title)
-        lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase;")
+        lbl.setStyleSheet(f"font-size: {font(14)}px; font-weight: bold; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase;")
         layout.addWidget(lbl)
-        
+
         line = QFrame()
-        line.setFixedHeight(1)
+        line.setFixedHeight(s(1))
         line.setStyleSheet("background: #f1f5f9; border: none;")
         layout.addWidget(line)
-        
+
         return card, layout
 
     def _add_opening_row(self, layout, mop, amt):
@@ -232,22 +233,22 @@ class ShiftDetailDialog(QDialog):
         row.setObjectName("RowWidget")
         row.setStyleSheet("QWidget#RowWidget { border: none; }")
         row_l = QHBoxLayout(row)
-        row_l.setContentsMargins(0, 5, 0, 5)
-        
+        row_l.setContentsMargins(0, s(5), 0, s(5))
+
         icon = QLabel("💰" if "Naqd" in mop or "Cash" in mop else "💳")
-        icon.setStyleSheet("font-size: 18px; border: none;")
+        icon.setStyleSheet(f"font-size: {font(18)}px; border: none;")
         row_l.addWidget(icon)
-        
+
         lbl = QLabel(mop)
-        lbl.setStyleSheet("font-size: 16px; font-weight: 600; color: #334155; border: none;")
+        lbl.setStyleSheet(f"font-size: {font(16)}px; font-weight: 600; color: #334155; border: none;")
         row_l.addWidget(lbl)
-        
+
         row_l.addStretch()
-        
+
         val = QLabel(self._fmt(amt))
-        val.setStyleSheet("font-size: 18px; font-weight: bold; color: #0f172a; border: none;")
+        val.setStyleSheet(f"font-size: {font(18)}px; font-weight: bold; color: #0f172a; border: none;")
         row_l.addWidget(val)
-        
+
         layout.addWidget(row)
 
     def _on_loaded(self, success: bool, doc: dict, payments: list):
@@ -267,13 +268,13 @@ class ShiftDetailDialog(QDialog):
 
         if status == "Open":
             self.status_lbl.setText("🟢 OCHIQ")
-            self.status_lbl.setStyleSheet("""
-                QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #dcfce7; color: #16a34a; border: none; }
+            self.status_lbl.setStyleSheet(f"""
+                QLabel {{ padding: {s(6)}px {s(12)}px; border-radius: {s(6)}px; font-size: {font(14)}px; font-weight: bold; background: #dcfce7; color: #16a34a; border: none; }}
             """)
         else:
             self.status_lbl.setText("🔴 YOPILGAN")
-            self.status_lbl.setStyleSheet("""
-                QLabel { padding: 6px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; background: #f1f5f9; color: #64748b; border: none; }
+            self.status_lbl.setStyleSheet(f"""
+                QLabel {{ padding: {s(6)}px {s(12)}px; border-radius: {s(6)}px; font-size: {font(14)}px; font-weight: bold; background: #f1f5f9; color: #64748b; border: none; }}
             """)
 
         # Ochilish summalari Card
@@ -287,31 +288,31 @@ class ShiftDetailDialog(QDialog):
         # Yopilish hisobi Card
         if payments:
             p_card, p_lyt = self._create_section_card("Smena yakunidagi hisobot")
-            
+
             # Header
             hdr = QWidget()
             hdr.setObjectName("HdrWidget")
             hdr.setStyleSheet("QWidget#HdrWidget { border: none; }")
             hdr_l = QHBoxLayout(hdr)
             hdr_l.setContentsMargins(0, 0, 0, 0)
-            
+
             for text, align, width in [
                 ("To'lov turi", Qt.AlignmentFlag.AlignLeft, 0),
-                ("Dasturda", Qt.AlignmentFlag.AlignRight, 120),
-                ("Kassada", Qt.AlignmentFlag.AlignRight, 120),
-                ("Farq", Qt.AlignmentFlag.AlignRight, 100),
+                ("Dasturda", Qt.AlignmentFlag.AlignRight, s(120)),
+                ("Kassada", Qt.AlignmentFlag.AlignRight, s(120)),
+                ("Farq", Qt.AlignmentFlag.AlignRight, s(100)),
             ]:
                 lbl = QLabel(text)
-                lbl.setStyleSheet("font-size: 12px; font-weight: bold; color: #64748b; border: none;")
+                lbl.setStyleSheet(f"font-size: {font(12)}px; font-weight: bold; color: #64748b; border: none;")
                 lbl.setAlignment(align)
                 if width:
                     lbl.setFixedWidth(width)
                 hdr_l.addWidget(lbl)
-            
+
             p_lyt.addWidget(hdr)
-            
+
             line = QFrame()
-            line.setFixedHeight(1)
+            line.setFixedHeight(s(1))
             line.setStyleSheet("background: #f1f5f9; border: none;")
             p_lyt.addWidget(line)
 
@@ -325,33 +326,33 @@ class ShiftDetailDialog(QDialog):
                 row.setObjectName("RowWidget")
                 row.setStyleSheet("QWidget#RowWidget { border: none; }")
                 row_l = QHBoxLayout(row)
-                row_l.setContentsMargins(0, 8, 0, 8)
+                row_l.setContentsMargins(0, s(8), 0, s(8))
 
                 mop_lbl = QLabel(mop)
-                mop_lbl.setStyleSheet("font-size: 15px; font-weight: 600; color: #334155; border: none;")
+                mop_lbl.setStyleSheet(f"font-size: {font(15)}px; font-weight: 600; color: #334155; border: none;")
                 row_l.addWidget(mop_lbl)
 
                 exp_lbl = QLabel(self._fmt(expected))
-                exp_lbl.setFixedWidth(120)
+                exp_lbl.setFixedWidth(s(120))
                 exp_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-                exp_lbl.setStyleSheet("font-size: 15px; color: #475569; border: none;")
+                exp_lbl.setStyleSheet(f"font-size: {font(15)}px; color: #475569; border: none;")
                 row_l.addWidget(exp_lbl)
 
                 clos_lbl = QLabel(self._fmt(closing))
-                clos_lbl.setFixedWidth(120)
+                clos_lbl.setFixedWidth(s(120))
                 clos_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-                clos_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #0f172a; border: none;")
+                clos_lbl.setStyleSheet(f"font-size: {font(15)}px; font-weight: bold; color: #0f172a; border: none;")
                 row_l.addWidget(clos_lbl)
 
                 diff_lbl = QLabel(self._fmt(diff))
-                diff_lbl.setFixedWidth(100)
+                diff_lbl.setFixedWidth(s(100))
                 diff_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
                 if diff < 0:
-                    diff_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #ef4444; border: none;") # Qizil (Kamo'mad)
+                    diff_lbl.setStyleSheet(f"font-size: {font(15)}px; font-weight: bold; color: #ef4444; border: none;")
                 elif diff > 0:
-                    diff_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #10b981; border: none;") # Yashil (Ortiqcha)
+                    diff_lbl.setStyleSheet(f"font-size: {font(15)}px; font-weight: bold; color: #10b981; border: none;")
                 else:
-                    diff_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #94a3b8; border: none;") # Kulrang
+                    diff_lbl.setStyleSheet(f"font-size: {font(15)}px; font-weight: bold; color: #94a3b8; border: none;")
                 row_l.addWidget(diff_lbl)
 
                 p_lyt.addWidget(row)
@@ -361,12 +362,12 @@ class ShiftDetailDialog(QDialog):
         elif status == "Open":
             card = QFrame()
             card.setObjectName("OpenCard")
-            card.setStyleSheet("QFrame#OpenCard { background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; }")
+            card.setStyleSheet(f"QFrame#OpenCard {{ background: #fffbeb; border: 1px solid #fde68a; border-radius: {s(12)}px; }}")
             l = QVBoxLayout(card)
-            l.setContentsMargins(20, 30, 20, 30)
+            l.setContentsMargins(s(20), s(30), s(20), s(30))
             msg = QLabel("⚠️ Smena hali ochiq. Yopilish hisoboti mavjud emas.")
             msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            msg.setStyleSheet("font-size: 16px; font-weight: bold; color: #d97706; border: none;")
+            msg.setStyleSheet(f"font-size: {font(16)}px; font-weight: bold; color: #d97706; border: none;")
             l.addWidget(msg)
             self.content_layout.addWidget(card)
 
@@ -383,40 +384,40 @@ class PosShiftsWindow(QWidget):
         self.setStyleSheet("background: white;")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 12, 16, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(s(16), s(12), s(16), s(12))
+        layout.setSpacing(s(10))
 
         # Header
         hdr_row = QHBoxLayout()
 
         title = QLabel("Kassa tarixi")
-        title.setStyleSheet("font-size: 18px; font-weight: 800; color: #1e293b;")
+        title.setStyleSheet(f"font-size: {font(18)}px; font-weight: 800; color: #1e293b;")
         hdr_row.addWidget(title)
 
         hint = QLabel("(2× bosing — batafsil)")
-        hint.setStyleSheet("font-size: 11px; color: #94a3b8; font-style: italic;")
+        hint.setStyleSheet(f"font-size: {font(11)}px; color: #94a3b8; font-style: italic;")
         hdr_row.addWidget(hint)
         hdr_row.addStretch()
 
         refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(44)
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                padding: 0 16px; background: #f1f5f9; color: #475569;
-                font-weight: 600; font-size: 13px;
-                border-radius: 8px; border: none;
-            }
-            QPushButton:hover { background: #e2e8f0; }
+        refresh_btn.setFixedHeight(s(44))
+        refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 0 {s(16)}px; background: #f1f5f9; color: #475569;
+                font-weight: 600; font-size: {font(13)}px;
+                border-radius: {s(8)}px; border: none;
+            }}
+            QPushButton:hover {{ background: #e2e8f0; }}
         """)
         refresh_btn.clicked.connect(self.load_shifts)
         hdr_row.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(44, 44)
-        close_btn.setStyleSheet("""
-            QPushButton { background: #fee2e2; color: #b91c1c;
-                font-weight: 700; font-size: 14px; border-radius: 8px; border: none; }
-            QPushButton:hover { background: #fecaca; }
+        close_btn.setFixedSize(s(44), s(44))
+        close_btn.setStyleSheet(f"""
+            QPushButton {{ background: #fee2e2; color: #b91c1c;
+                font-weight: 700; font-size: {font(14)}px; border-radius: {s(8)}px; border: none; }}
+            QPushButton:hover {{ background: #fecaca; }}
         """)
         close_btn.clicked.connect(self.hide)
         hdr_row.addWidget(close_btn)
@@ -435,33 +436,33 @@ class PosShiftsWindow(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                border: none; background: white; font-size: 14px;
-            }
-            QTableWidget::item { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; }
-            QTableWidget::item:selected { background: #dbeafe; color: #1e40af; }
-            QHeaderView::section {
+        self.table.setStyleSheet(f"""
+            QTableWidget {{
+                border: none; background: white; font-size: {font(14)}px;
+            }}
+            QTableWidget::item {{ padding: {s(10)}px {s(8)}px; border-bottom: 1px solid #f1f5f9; }}
+            QTableWidget::item:selected {{ background: #dbeafe; color: #1e40af; }}
+            QHeaderView::section {{
                 background: #f8fafc; color: #64748b;
-                font-size: 12px; font-weight: bold; letter-spacing: 0.5px;
-                padding: 12px 8px; border: none;
+                font-size: {font(12)}px; font-weight: bold; letter-spacing: 0.5px;
+                padding: {s(12)}px {s(8)}px; border: none;
                 border-bottom: 2px solid #e2e8f0;
                 text-align: left;
-            }
+            }}
         """)
         self.table.itemDoubleClicked.connect(self._show_details)
 
         hdr = self.table.horizontalHeader()
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Stretch) 
-        
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
         layout.addWidget(self.table)
 
 
     def load_shifts(self):
         self.table.setRowCount(0)
         self.worker = FetchShiftsWorker(self.api)
-        self.worker.finished.connect(self._on_loaded)
+        self.worker.result_ready.connect(self._on_loaded)
         self.worker.start()
 
     def _on_loaded(self, success: bool, data: list):
@@ -470,22 +471,20 @@ class PosShiftsWindow(QWidget):
         self.table.setRowCount(0)
         for i, item in enumerate(data):
             self.table.insertRow(i)
-            # Make rows taller for better touch/click experience
-            self.table.setRowHeight(i, 50)
+            self.table.setRowHeight(i, s(50))
 
-            # Center/Left Alignments properly configured
             id_item = QTableWidgetItem(item.get("name", ""))
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 0, id_item)
-            
+
             user_item = QTableWidgetItem(item.get("user", "").split('@')[0])
             user_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 1, user_item)
-            
+
             date_item = QTableWidgetItem(item.get("posting_date", ""))
             date_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 2, date_item)
-            
+
             creation = str(item.get("creation", ""))
             time_str = creation[11:16] if len(creation) > 16 else ""
             time_item = QTableWidgetItem(time_str)
@@ -498,8 +497,7 @@ class PosShiftsWindow(QWidget):
                 status_item.setForeground(Qt.GlobalColor.darkGreen)
             else:
                 status_item.setForeground(Qt.GlobalColor.darkGray)
-            
-            # Align status to left for better look, matching header
+
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 4, status_item)
 

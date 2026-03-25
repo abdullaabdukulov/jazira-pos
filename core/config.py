@@ -63,12 +63,15 @@ def save_config(data: dict):
 
 
 
-def save_credentials(url: str, user: str, password: str, site: str = ""):
+def save_credentials(url: str, user: str, password: str, site: str = "",
+                     api_key: str = "", api_secret: str = ""):
     env_lines = [
         f"FRAPPE_URL={url}\n",
         f"FRAPPE_USER={user}\n",
         f"FRAPPE_PASSWORD={password}\n",
         f"FRAPPE_SITE={site}\n",
+        f"FRAPPE_API_KEY={api_key}\n",
+        f"FRAPPE_API_SECRET={api_secret}\n",
     ]
     try:
         with open(ENV_FILE, "w") as f:

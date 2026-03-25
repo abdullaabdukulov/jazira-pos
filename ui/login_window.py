@@ -8,6 +8,7 @@ from core.api import FrappeAPI
 from core.config import save_credentials, load_config
 from core.logger import get_logger
 from ui.components.dialogs import ClickableLineEdit
+from ui.scale import s, font
 
 logger = get_logger(__name__)
 
@@ -25,7 +26,7 @@ class LoginWindow(QWidget):
 
     def _init_ui(self):
         self.setWindowTitle("URY POS — Kirish")
-        self.setMinimumSize(480, 600)
+        self.setMinimumSize(s(480), s(600))
         self.showMaximized()
 
         # ——— Asosiy fon ———
@@ -52,97 +53,97 @@ class LoginWindow(QWidget):
 
         card = QFrame()
         card.setObjectName("loginCard")
-        card.setFixedWidth(420)
-        card.setStyleSheet("""
-            QFrame#loginCard {
+        card.setFixedWidth(s(420))
+        card.setStyleSheet(f"""
+            QFrame#loginCard {{
                 background: white;
-                border-radius: 20px;
+                border-radius: {s(20)}px;
                 border: 1px solid #e2e8f0;
-            }
+            }}
         """)
 
         # Soya effekti
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(40)
-        shadow.setOffset(0, 8)
+        shadow.setBlurRadius(s(40))
+        shadow.setOffset(0, s(8))
         shadow.setColor(QColor(0, 0, 0, 60))
         card.setGraphicsEffect(shadow)
 
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(36, 32, 36, 32)
+        layout.setContentsMargins(s(36), s(32), s(36), s(32))
         layout.setSpacing(0)
 
         # ——— Logo / Branding ———
         logo = QLabel("🍽")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet("font-size: 48px; margin-bottom: 4px; background: transparent;")
+        logo.setStyleSheet(f"font-size: {font(48)}px; margin-bottom: {s(4)}px; background: transparent;")
         layout.addWidget(logo)
 
         title = QLabel("URY POS")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("""
-            font-size: 26px; font-weight: 900; color: #0f172a;
-            letter-spacing: 2px; margin-bottom: 2px; background: transparent;
+        title.setStyleSheet(f"""
+            font-size: {font(26)}px; font-weight: 900; color: #0f172a;
+            letter-spacing: 2px; margin-bottom: {s(2)}px; background: transparent;
         """)
         layout.addWidget(title)
 
         subtitle = QLabel("Kassir tizimiga kirish")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("""
-            font-size: 13px; color: #94a3b8; margin-bottom: 20px; background: transparent;
+        subtitle.setStyleSheet(f"""
+            font-size: {font(13)}px; color: #94a3b8; margin-bottom: {s(20)}px; background: transparent;
         """)
         layout.addWidget(subtitle)
 
         # ——— Separator ———
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background: #f1f5f9; max-height: 1px; margin-bottom: 16px;")
+        sep.setStyleSheet(f"background: #f1f5f9; max-height: 1px; margin-bottom: {s(16)}px;")
         layout.addWidget(sep)
 
         # ——— Formalar ———
         config = load_config()
         default_url = config.get("url", "")
 
-        INPUT_STYLE = """
-            QLineEdit {
-                padding: 12px 14px;
-                font-size: 14px;
+        INPUT_STYLE = f"""
+            QLineEdit {{
+                padding: {s(12)}px {s(14)}px;
+                font-size: {font(14)}px;
                 border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
+                border-radius: {s(10)}px;
                 background: #f8fafc;
                 color: #1e293b;
-            }
-            QLineEdit:focus {
+            }}
+            QLineEdit:focus {{
                 border: 1.5px solid #3b82f6;
                 background: #ffffff;
-            }
-            QLineEdit:disabled {
+            }}
+            QLineEdit:disabled {{
                 background: #f1f5f9;
                 color: #94a3b8;
-            }
+            }}
         """
 
-        INPUT_ACTIVE_STYLE = """
-            QLineEdit {
-                padding: 12px 14px;
-                font-size: 14px;
+        INPUT_ACTIVE_STYLE = f"""
+            QLineEdit {{
+                padding: {s(12)}px {s(14)}px;
+                font-size: {font(14)}px;
                 border: 2px solid #3b82f6;
-                border-radius: 10px;
+                border-radius: {s(10)}px;
                 background: #ffffff;
                 color: #1e293b;
-            }
-            QLineEdit:disabled {
+            }}
+            QLineEdit:disabled {{
                 background: #f1f5f9;
                 color: #94a3b8;
-            }
+            }}
         """
 
         self._input_style = INPUT_STYLE
         self._input_active_style = INPUT_ACTIVE_STYLE
 
-        LABEL_STYLE = """
-            font-size: 12px; font-weight: 700; color: #64748b;
-            margin-bottom: 4px; margin-top: 10px; background: transparent;
+        LABEL_STYLE = f"""
+            font-size: {font(12)}px; font-weight: 700; color: #64748b;
+            margin-bottom: {s(4)}px; margin-top: {s(10)}px; background: transparent;
         """
 
         # Server URL
@@ -150,18 +151,18 @@ class LoginWindow(QWidget):
         self.url_input = ClickableLineEdit()
         self.url_input.setPlaceholderText("masalan: http://192.168.1.53:8000")
         self.url_input.setText(default_url)
-        self.url_input.setReadOnly(True)
         self.url_input.setStyleSheet(INPUT_STYLE)
         self.url_input.clicked.connect(lambda w: self._activate_field(w, "Server manzili"))
+        self.url_input.textChanged.connect(self._sync_kb_display)
         layout.addWidget(self.url_input)
 
         # Login (Email)
         layout.addWidget(self._label("Email yoki Login", LABEL_STYLE))
         self.user_input = ClickableLineEdit()
         self.user_input.setPlaceholderText("cashier@example.uz")
-        self.user_input.setReadOnly(True)
         self.user_input.setStyleSheet(INPUT_STYLE)
         self.user_input.clicked.connect(lambda w: self._activate_field(w, "Email yoki Login"))
+        self.user_input.textChanged.connect(self._sync_kb_display)
         layout.addWidget(self.user_input)
 
         # Parol
@@ -169,22 +170,22 @@ class LoginWindow(QWidget):
         self.password_input = ClickableLineEdit()
         self.password_input.setPlaceholderText("••••••••")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setReadOnly(True)
         self.password_input.setStyleSheet(INPUT_STYLE)
         self.password_input.clicked.connect(lambda w: self._activate_field(w, "Parol"))
+        self.password_input.textChanged.connect(self._sync_kb_display)
         layout.addWidget(self.password_input)
 
         # ——— Kengaytirilgan sozlamalar (Site name) ———
         self.advanced_toggle = QPushButton("Kengaytirilgan sozlamalar ▸")
-        self.advanced_toggle.setFixedHeight(44)
+        self.advanced_toggle.setFixedHeight(s(44))
         self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.setStyleSheet("""
-            QPushButton {
-                font-size: 12px; font-weight: 600; color: #94a3b8;
-                background: transparent; border: none; margin-top: 8px;
-                text-align: left; padding-left: 4px;
-            }
-            QPushButton:checked { color: #3b82f6; }
+        self.advanced_toggle.setStyleSheet(f"""
+            QPushButton {{
+                font-size: {font(12)}px; font-weight: 600; color: #94a3b8;
+                background: transparent; border: none; margin-top: {s(8)}px;
+                text-align: left; padding-left: {s(4)}px;
+            }}
+            QPushButton:checked {{ color: #3b82f6; }}
         """)
         self.advanced_toggle.toggled.connect(self._toggle_advanced)
         layout.addWidget(self.advanced_toggle)
@@ -195,18 +196,18 @@ class LoginWindow(QWidget):
         self.site_frame.setStyleSheet("background: transparent;")
         site_layout = QVBoxLayout(self.site_frame)
         site_layout.setContentsMargins(0, 0, 0, 0)
-        site_layout.setSpacing(2)
+        site_layout.setSpacing(s(2))
 
         site_hint = QLabel("Multi-site bench uchun (ixtiyoriy)")
-        site_hint.setStyleSheet("font-size: 11px; color: #94a3b8; background: transparent;")
+        site_hint.setStyleSheet(f"font-size: {font(11)}px; color: #94a3b8; background: transparent;")
         site_layout.addWidget(site_hint)
 
         self.site_input = ClickableLineEdit()
         self.site_input.setPlaceholderText("sayt nomi (masalan: mysite.local)")
         self.site_input.setText(config.get("site", ""))
-        self.site_input.setReadOnly(True)
         self.site_input.setStyleSheet(INPUT_STYLE)
         self.site_input.clicked.connect(lambda w: self._activate_field(w, "Sayt nomi"))
+        self.site_input.textChanged.connect(self._sync_kb_display)
         site_layout.addWidget(self.site_input)
         layout.addWidget(self.site_frame)
 
@@ -214,44 +215,44 @@ class LoginWindow(QWidget):
         self.error_label = QLabel("")
         self.error_label.setWordWrap(True)
         self.error_label.setVisible(False)
-        self.error_label.setStyleSheet("""
-            font-size: 12px; color: #dc2626; background: #fef2f2;
-            border: 1px solid #fecaca; border-radius: 8px;
-            padding: 8px 12px; margin-top: 10px;
+        self.error_label.setStyleSheet(f"""
+            font-size: {font(12)}px; color: #dc2626; background: #fef2f2;
+            border: 1px solid #fecaca; border-radius: {s(8)}px;
+            padding: {s(8)}px {s(12)}px; margin-top: {s(10)}px;
         """)
         layout.addWidget(self.error_label)
 
         # ——— Login tugma ———
         self.login_btn = QPushButton("KIRISH")
         self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.login_btn.setFixedHeight(56)
-        self.login_btn.setStyleSheet("""
-            QPushButton {
+        self.login_btn.setFixedHeight(s(56))
+        self.login_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
                     stop:0 #2563eb, stop:1 #3b82f6
                 );
                 color: white;
                 font-weight: 800;
-                font-size: 15px;
-                border-radius: 12px;
+                font-size: {font(15)}px;
+                border-radius: {s(12)}px;
                 border: none;
                 letter-spacing: 1px;
-                margin-top: 16px;
-            }
-            QPushButton:hover {
+                margin-top: {s(16)}px;
+            }}
+            QPushButton:hover {{
                 background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
                     stop:0 #1d4ed8, stop:1 #2563eb
                 );
-            }
-            QPushButton:pressed {
+            }}
+            QPushButton:pressed {{
                 background: #1e40af;
-            }
-            QPushButton:disabled {
+            }}
+            QPushButton:disabled {{
                 background: #cbd5e1;
                 color: #94a3b8;
-            }
+            }}
         """)
         self.login_btn.clicked.connect(self._handle_login)
         layout.addWidget(self.login_btn)
@@ -259,8 +260,8 @@ class LoginWindow(QWidget):
         # ——— Pastki yozuv ———
         footer = QLabel("Ury Restaurant POS v1.0")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet("""
-            font-size: 11px; color: #cbd5e1; margin-top: 14px; background: transparent;
+        footer.setStyleSheet(f"""
+            font-size: {font(11)}px; color: #cbd5e1; margin-top: {s(14)}px; background: transparent;
         """)
         layout.addWidget(footer)
 
@@ -282,35 +283,35 @@ class LoginWindow(QWidget):
             }
         """)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(16, 10, 16, 12)
-        panel_layout.setSpacing(6)
+        panel_layout.setContentsMargins(s(16), s(10), s(16), s(12))
+        panel_layout.setSpacing(s(6))
 
         # Yuqori qator: aktiv field nomi + display + yopish
         top_row = QHBoxLayout()
 
         self.kb_field_label = QLabel("")
-        self.kb_field_label.setStyleSheet("""
-            font-size: 12px; font-weight: 700; color: #3b82f6;
-            background: transparent; padding: 0 4px;
+        self.kb_field_label.setStyleSheet(f"""
+            font-size: {font(12)}px; font-weight: 700; color: #3b82f6;
+            background: transparent; padding: 0 {s(4)}px;
         """)
 
         self.kb_display = QLabel("")
-        self.kb_display.setStyleSheet("""
-            font-size: 16px; font-weight: 600; color: #334155;
+        self.kb_display.setStyleSheet(f"""
+            font-size: {font(16)}px; font-weight: 600; color: #334155;
             background: white; border: 1.5px solid #3b82f6;
-            border-radius: 8px; padding: 6px 12px;
+            border-radius: {s(8)}px; padding: {s(6)}px {s(12)}px;
         """)
-        self.kb_display.setFixedHeight(40)
+        self.kb_display.setFixedHeight(s(40))
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(44, 44)
-        close_btn.setStyleSheet("""
-            QPushButton {
+        close_btn.setFixedSize(s(44), s(44))
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: #ef4444; color: white;
-                font-weight: bold; font-size: 16px;
-                border-radius: 8px; border: none;
-            }
-            QPushButton:pressed { background: #dc2626; }
+                font-weight: bold; font-size: {font(16)}px;
+                border-radius: {s(8)}px; border: none;
+            }}
+            QPushButton:pressed {{ background: #dc2626; }}
         """)
         close_btn.clicked.connect(self._close_keyboard)
 
@@ -330,7 +331,7 @@ class LoginWindow(QWidget):
         ]
         for row_keys in rows:
             row_layout = QHBoxLayout()
-            row_layout.setSpacing(5)
+            row_layout.setSpacing(s(5))
             for key in row_keys:
                 btn = self._make_key(key)
                 row_layout.addWidget(btn)
@@ -348,27 +349,27 @@ class LoginWindow(QWidget):
             label = '⇧ Aa'
 
         btn = QPushButton(label)
-        btn.setFixedHeight(48)
+        btn.setFixedHeight(s(48))
 
         if key.strip() == '⌫':
-            style = "background:#fee2e2; color:#ef4444; font-size:18px; font-weight:bold;"
+            style = f"background:#fee2e2; color:#ef4444; font-size:{font(18)}px; font-weight:bold;"
         elif key.strip() == 'CLR':
-            style = "background:#fff7ed; color:#ea580c; font-size:11px; font-weight:bold;"
+            style = f"background:#fff7ed; color:#ea580c; font-size:{font(11)}px; font-weight:bold;"
         elif key.strip() == 'CAPS':
-            style = "background:#e0e7ff; color:#4338ca; font-size:13px; font-weight:bold;"
+            style = f"background:#e0e7ff; color:#4338ca; font-size:{font(13)}px; font-weight:bold;"
         elif 'SPACE' in key:
-            style = "background:#eff6ff; color:#3b82f6; font-size:13px; font-weight:bold;"
-            btn.setMinimumWidth(120)
+            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(13)}px; font-weight:bold;"
+            btn.setMinimumWidth(s(120))
         elif key.strip().isdigit():
-            style = "background:#e0e7ff; color:#3730a3; font-size:16px; font-weight:bold;"
+            style = f"background:#e0e7ff; color:#3730a3; font-size:{font(16)}px; font-weight:bold;"
         else:
-            style = "background:white; color:#1e293b; font-size:15px; font-weight:600;"
+            style = f"background:white; color:#1e293b; font-size:{font(15)}px; font-weight:600;"
 
         btn.setStyleSheet(f"""
             QPushButton {{
                 {style}
                 border: 1px solid #e2e8f0;
-                border-radius: 7px;
+                border-radius: {s(7)}px;
             }}
             QPushButton:pressed {{ background: #dbeafe; }}
         """)
@@ -419,6 +420,15 @@ class LoginWindow(QWidget):
         else:
             self.kb_display.setText(widget.text())
         self.keyboard_panel.setVisible(True)
+
+    def _sync_kb_display(self, text):
+        """Fizik klaviatura bilan yozilganda ekrandagi keyboard displayni yangilash."""
+        if not self.keyboard_panel.isVisible() or not self._active_field:
+            return
+        if self._active_field == self.password_input:
+            self.kb_display.setText('•' * len(text) if text else "")
+        else:
+            self.kb_display.setText(text)
 
     def _close_keyboard(self):
         if self._active_field:

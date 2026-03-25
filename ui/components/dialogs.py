@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFrame, QLineEdit,
 )
 from PyQt6.QtCore import pyqtSignal
+from ui.scale import s, font
 
 
 class ClickableLineEdit(QLineEdit):
@@ -30,23 +31,23 @@ class InfoDialog(QDialog):
     def __init__(self, parent, title: str, message: str, kind: str = "success"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(380)
+        self.setFixedWidth(s(380))
         self.setStyleSheet("background: white;")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 18, 22, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(s(22), s(18), s(22), s(18))
+        layout.setSpacing(s(12))
 
         top = QHBoxLayout()
         ic = QLabel(self._ICONS.get(kind, "ℹ"))
         ic.setStyleSheet(
-            f"font-size:26px; background:{self._BG.get(kind, '#f8fafc')};"
+            f"font-size:{font(26)}px; background:{self._BG.get(kind, '#f8fafc')};"
             f"border:1.5px solid {self._BORDER.get(kind, '#e2e8f0')};"
-            f"border-radius:10px; padding:6px 12px;"
+            f"border-radius:{s(10)}px; padding:{s(6)}px {s(12)}px;"
         )
         top.addWidget(ic)
         ttl = QLabel(title)
-        ttl.setStyleSheet(f"font-size:16px; font-weight:800; color:{self._COLORS.get(kind, '#1e293b')};")
+        ttl.setStyleSheet(f"font-size:{font(16)}px; font-weight:800; color:{self._COLORS.get(kind, '#1e293b')};")
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
@@ -57,14 +58,14 @@ class InfoDialog(QDialog):
 
         msg = QLabel(message)
         msg.setWordWrap(True)
-        msg.setStyleSheet("font-size:13px; color:#334155; line-height:1.5;")
+        msg.setStyleSheet(f"font-size:{font(13)}px; color:#334155; line-height:1.5;")
         layout.addWidget(msg)
 
         ok = QPushButton("OK")
-        ok.setFixedHeight(42)
+        ok.setFixedHeight(s(42))
         ok.setStyleSheet(
             f"QPushButton{{background:{self._COLORS.get(kind, '#3b82f6')};"
-            f"color:white;font-weight:700;border-radius:10px;border:none;}}"
+            f"color:white;font-weight:700;border-radius:{s(10)}px;border:none;}}"
             f"QPushButton:hover{{opacity:0.9;}}"
         )
         ok.clicked.connect(self.accept)
@@ -78,23 +79,23 @@ class ConfirmDialog(QDialog):
                  yes_color: str = "#dc2626"):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(380)
+        self.setFixedWidth(s(380))
         self.setStyleSheet("background: white;")
         self.result_accepted = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 18, 22, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(s(22), s(18), s(22), s(18))
+        layout.setSpacing(s(12))
 
         top = QHBoxLayout()
         ic = QLabel(icon)
         ic.setStyleSheet(
-            "font-size:26px; background:#fffbeb;"
-            "border:1.5px solid #fde68a; border-radius:10px; padding:6px 12px;"
+            f"font-size:{font(26)}px; background:#fffbeb;"
+            f"border:1.5px solid #fde68a; border-radius:{s(10)}px; padding:{s(6)}px {s(12)}px;"
         )
         top.addWidget(ic)
         ttl = QLabel(title)
-        ttl.setStyleSheet("font-size:16px; font-weight:800; color:#1e293b;")
+        ttl.setStyleSheet(f"font-size:{font(16)}px; font-weight:800; color:#1e293b;")
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
@@ -105,26 +106,26 @@ class ConfirmDialog(QDialog):
 
         msg = QLabel(message)
         msg.setWordWrap(True)
-        msg.setStyleSheet("font-size:13px; color:#334155;")
+        msg.setStyleSheet(f"font-size:{font(13)}px; color:#334155;")
         layout.addWidget(msg)
 
         btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(s(10))
 
         no_btn = QPushButton(no_text)
-        no_btn.setFixedHeight(42)
+        no_btn.setFixedHeight(s(42))
         no_btn.setStyleSheet(
-            "QPushButton{background:#f1f5f9;color:#64748b;font-weight:700;"
-            "border-radius:10px;border:none;}"
-            "QPushButton:hover{background:#e2e8f0;}"
+            f"QPushButton{{background:#f1f5f9;color:#64748b;font-weight:700;"
+            f"border-radius:{s(10)}px;border:none;}}"
+            f"QPushButton:hover{{background:#e2e8f0;}}"
         )
         no_btn.clicked.connect(self.reject)
 
         yes_btn = QPushButton(yes_text)
-        yes_btn.setFixedHeight(42)
+        yes_btn.setFixedHeight(s(42))
         yes_btn.setStyleSheet(
             f"QPushButton{{background:{yes_color};color:white;font-weight:700;"
-            f"border-radius:10px;border:none;}}"
+            f"border-radius:{s(10)}px;border:none;}}"
             f"QPushButton:hover{{opacity:0.9;}}"
         )
         yes_btn.clicked.connect(self._on_yes)

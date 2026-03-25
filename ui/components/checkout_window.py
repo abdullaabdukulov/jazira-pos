@@ -10,15 +10,16 @@ from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
 from database.models import PendingInvoice, db
-from core.printer import print_receipt
+from core.qz_printer import print_receipt
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
+from ui.scale import s, font
 
 logger = get_logger(__name__)
 
 
 class CheckoutWorker(QThread):
-    finished = pyqtSignal(bool, str)
+    result_ready = pyqtSignal(bool, str)
 
     def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI):
         super().__init__()
@@ -28,62 +29,64 @@ class CheckoutWorker(QThread):
         self.api = api
 
     def run(self):
-        # Shared API orqali chaqiriladi
-        success, response = self.api.call_method(
-            "ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data
-        )
-
-        if success and isinstance(response, dict):
-            if response.get("status") == "Failure":
-                self._save_offline(response)
-                return
-
-            invoice_name = response.get("name")
-            if not invoice_name:
-                self._save_offline("Chek raqami (invoice name) qaytmadi")
-                return
-
-            payment_payload = {
-                "customer": self.invoice_data.get("customer"),
-                "payments": self.payments,
-                "cashier": self.invoice_data.get("cashier"),
-                "pos_profile": self.invoice_data.get("pos_profile"),
-                "owner": self.invoice_data.get("owner"),
-                "additionalDiscount": 0,
-                "table": None,
-                "invoice": invoice_name,
-            }
-
-            submit_success, submit_response = self.api.call_method(
-                "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
+        try:
+            # Shared API orqali chaqiriladi
+            success, response = self.api.call_method(
+                "ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data
             )
 
-            if submit_success:
-                self.finished.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
-            else:
-                self._save_offline(f"To'lovda xatolik (make_invoice): {submit_response}")
-        else:
-            self._save_offline(response)
+            if success and isinstance(response, dict):
+                if response.get("status") == "Failure":
+                    self._save_offline(response)
+                    return
 
-    def _save_offline(self, error):
+                invoice_name = response.get("name")
+                if not invoice_name:
+                    self._save_offline("Chek raqami (invoice name) qaytmadi")
+                    return
+
+                payment_payload = {
+                    "customer": self.invoice_data.get("customer"),
+                    "payments": self.payments,
+                    "cashier": self.invoice_data.get("cashier"),
+                    "pos_profile": self.invoice_data.get("pos_profile"),
+                    "owner": self.invoice_data.get("owner"),
+                    "additionalDiscount": 0,
+                    "table": None,
+                    "invoice": invoice_name,
+                }
+
+                submit_success, submit_response = self.api.call_method(
+                    "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
+                )
+
+                if submit_success:
+                    self.result_ready.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
+                else:
+                    self._save_offline(f"To'lovda xatolik (make_invoice): {submit_response}", sync_order_name=invoice_name)
+            else:
+                self._save_offline(response)
+        finally:
+            if not db.is_closed():
+                db.close()
+
+    def _save_offline(self, error, sync_order_name=None):
         try:
-            db.connect(reuse_if_open=True)
             if not PendingInvoice.select().where(PendingInvoice.offline_id == self.offline_id).exists():
                 save_data = dict(self.invoice_data)
                 save_data["_payments"] = self.payments
+                if sync_order_name:
+                    save_data["_sync_order_name"] = sync_order_name
                 PendingInvoice.create(
                     offline_id=self.offline_id,
                     invoice_data=json.dumps(save_data),
                     status="Pending",
                     error_message=str(error),
                 )
-            self.finished.emit(False, "Server bilan aloqa yo'qligi sababli chek oflayn saqlandi!")
+            self.result_ready.emit(False, "Server bilan aloqa yo'qligi sababli chek oflayn saqlandi!")
         except Exception as e:
             logger.error("Oflayn saqlashda xatolik: %s", e)
-            self.finished.emit(False, f"Oflayn saqlashda xatolik: {e}")
-        finally:
-            if not db.is_closed():
-                db.close()
+            self.result_ready.emit(False, f"Oflayn saqlashda xatolik: {e}")
 
 
 class CheckoutWindow(QDialog):
@@ -110,42 +113,38 @@ class CheckoutWindow(QDialog):
 
     def init_ui(self):
         self.setWindowTitle("To'lov")
-        self.setFixedSize(880, 620)
+        self.setFixedSize(s(880), s(620))
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
 
         main_h_layout = QHBoxLayout(self)
-        main_h_layout.setContentsMargins(20, 20, 20, 20)
-        main_h_layout.setSpacing(20)
+        main_h_layout.setContentsMargins(s(20), s(20), s(20), s(20))
+        main_h_layout.setSpacing(s(20))
 
         # ── LEFT PANEL ───────────────────────────────────────
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(12)
+        left_layout.setSpacing(s(12))
 
-        # Total card — dark (original)
         total_card = QFrame()
-        total_card.setStyleSheet("background-color: #1f2937; border-radius: 10px; padding: 15px;")
+        total_card.setStyleSheet(f"background-color: #1f2937; border-radius: {s(10)}px; padding: {s(15)}px;")
         total_layout = QVBoxLayout(total_card)
 
         lbl_title = QLabel("JAMI SUMMA")
-        lbl_title.setStyleSheet("color: #9ca3af; font-size: 12px; font-weight: bold;")
+        lbl_title.setStyleSheet(f"color: #9ca3af; font-size: {font(12)}px; font-weight: bold;")
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_layout.addWidget(lbl_title)
 
         self.lbl_total = QLabel(f"{self.total_amount:,.0f} UZS".replace(",", " "))
-        self.lbl_total.setStyleSheet("color: #ffffff; font-size: 32px; font-weight: bold;")
+        self.lbl_total.setStyleSheet(f"color: #ffffff; font-size: {font(32)}px; font-weight: bold;")
         self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_layout.addWidget(self.lbl_total)
         left_layout.addWidget(total_card)
 
-        # Payment inputs
         pay_label = QLabel("TO'LOV TURLARI")
-        pay_label.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        pay_label.setStyleSheet(f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
         left_layout.addWidget(pay_label)
 
         scroll = QScrollArea()
@@ -153,38 +152,43 @@ class CheckoutWindow(QDialog):
         scroll.setStyleSheet("border: none; background: transparent;")
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(8)
+        scroll_layout.setSpacing(s(8))
 
         config = load_config()
         payment_methods = config.get("payment_methods", ["Cash"])
         self.primary_input = None
 
+        _active_css = (
+            f"padding: {s(10)}px {s(14)}px; font-size: {font(18)}px; font-weight: 700; "
+            f"border: 2px solid #3b82f6; border-radius: {s(10)}px; background: #eff6ff; color: #1e293b;"
+        )
+        _normal_css = (
+            f"padding: {s(10)}px {s(14)}px; font-size: {font(18)}px; font-weight: 700; "
+            f"border: 1.5px solid #e2e8f0; border-radius: {s(10)}px; background: white; color: #1e293b;"
+        )
+        self._active_css = _active_css
+        self._normal_css = _normal_css
+
         for idx, mode in enumerate(payment_methods):
             row = QHBoxLayout()
             lbl = QLabel(mode)
-            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #334155;")
+            lbl.setStyleSheet(f"font-size: {font(14)}px; font-weight: 600; color: #334155;")
 
             input_field = ClickableLineEdit()
             input_field.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
             input_field.setPlaceholderText("0")
 
             if idx == 0:
-                input_field.setText(str(int(self.total_amount)))
+                input_field.setText(str(round(self.total_amount)))
                 self.active_input = input_field
                 self.primary_input = input_field
                 input_field.setFocus()
-                input_field.setStyleSheet(
-                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-                    "border: 2px solid #3b82f6; border-radius: 10px; background: #eff6ff; color: #1e293b;"
-                )
+                input_field.setStyleSheet(_active_css)
             else:
-                input_field.setStyleSheet(
-                    "padding: 10px 14px; font-size: 18px; font-weight: 700; "
-                    "border: 1.5px solid #e2e8f0; border-radius: 10px; background: white; color: #1e293b;"
-                )
+                input_field.setStyleSheet(_normal_css)
 
-            input_field.setFixedWidth(190)
-            input_field.setFixedHeight(48)
+            input_field.setFixedWidth(s(190))
+            input_field.setFixedHeight(s(48))
             input_field.setAlignment(Qt.AlignmentFlag.AlignRight)
             input_field.clicked.connect(self._set_active_input)
             input_field.textChanged.connect(self._on_payment_changed)
@@ -200,36 +204,34 @@ class CheckoutWindow(QDialog):
         scroll.setWidget(scroll_content)
         left_layout.addWidget(scroll)
 
-        # Remaining label
         self.lbl_remaining = QLabel("To'lov summasi to'liq yopildi")
         self.lbl_remaining.setStyleSheet(
-            "font-size: 16px; font-weight: 700; color: #16a34a; padding: 6px;"
+            f"font-size: {font(16)}px; font-weight: 700; color: #16a34a; padding: {s(6)}px;"
         )
         self.lbl_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
         left_layout.addWidget(self.lbl_remaining)
 
-        # Action buttons
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(s(10))
 
         btn_cancel = QPushButton("Bekor")
-        btn_cancel.setFixedHeight(52)
-        btn_cancel.setStyleSheet("""
-            QPushButton { background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: 14px; border-radius: 12px; border: none; }
-            QPushButton:hover { background: #e2e8f0; }
+        btn_cancel.setFixedHeight(s(52))
+        btn_cancel.setStyleSheet(f"""
+            QPushButton {{ background: #f1f5f9; color: #64748b;
+                font-weight: 700; font-size: {font(14)}px; border-radius: {s(12)}px; border: none; }}
+            QPushButton:hover {{ background: #e2e8f0; }}
         """)
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_confirm = QPushButton("✓  TO'LOV QILISH")
-        self.btn_confirm.setFixedHeight(52)
-        self.btn_confirm.setStyleSheet("""
-            QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+        self.btn_confirm = QPushButton("TO'LOV QILISH")
+        self.btn_confirm.setFixedHeight(s(52))
+        self.btn_confirm.setStyleSheet(f"""
+            QPushButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 #22c55e, stop:1 #16a34a);
-                color: white; font-weight: 800; font-size: 15px;
-                border-radius: 12px; border: none; }
-            QPushButton:hover { background: #15803d; }
-            QPushButton:disabled { background: #d1fae5; color: #86efac; }
+                color: white; font-weight: 800; font-size: {font(15)}px;
+                border-radius: {s(12)}px; border: none; }}
+            QPushButton:hover {{ background: #15803d; }}
+            QPushButton:disabled {{ background: #d1fae5; color: #86efac; }}
         """)
         self.btn_confirm.clicked.connect(self._process_checkout)
 
@@ -241,51 +243,44 @@ class CheckoutWindow(QDialog):
 
         # ── RIGHT PANEL — Numpad + Quick amounts ─────────────
         right_widget = QWidget()
-        right_widget.setStyleSheet("""
-            background: #f8fafc; border-radius: 14px;
-        """)
+        right_widget.setStyleSheet(f"background: #f8fafc; border-radius: {s(14)}px;")
         right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(12, 12, 12, 12)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(s(12), s(12), s(12), s(12))
+        right_layout.setSpacing(s(10))
 
         numpad_lbl = QLabel("MIQDOR KIRITING")
-        numpad_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        numpad_lbl.setStyleSheet(f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
         right_layout.addWidget(numpad_lbl)
 
         self.numpad = TouchNumpad()
         self.numpad.digit_clicked.connect(self._on_numpad_clicked)
         right_layout.addWidget(self.numpad)
 
-        # Quick amounts
         quick_lbl = QLabel("TEZKOR SUMMA")
-        quick_lbl.setStyleSheet(
-            "font-size: 10px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
-        )
+        quick_lbl.setStyleSheet(f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
         right_layout.addWidget(quick_lbl)
 
         quick_layout = QGridLayout()
-        quick_layout.setSpacing(6)
+        quick_layout.setSpacing(s(6))
         amounts = [1000, 5000, 10000, 20000, 50000, 100000, "MAX"]
         r, c = 0, 0
         for amt in amounts:
             display_text = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else "MAX"
             btn = QPushButton(display_text)
-            btn.setFixedSize(100, 48)
+            btn.setFixedSize(s(100), s(48))
             if amt == "MAX":
-                btn.setStyleSheet("""
-                    QPushButton { background: #3b82f6; color: white;
-                        font-weight: 700; font-size: 13px; border-radius: 8px; border: none; }
-                    QPushButton:hover { background: #2563eb; }
+                btn.setStyleSheet(f"""
+                    QPushButton {{ background: #3b82f6; color: white;
+                        font-weight: 700; font-size: {font(13)}px; border-radius: {s(8)}px; border: none; }}
+                    QPushButton:hover {{ background: #2563eb; }}
                 """)
                 btn.clicked.connect(self._fill_max)
             else:
-                btn.setStyleSheet("""
-                    QPushButton { background: white; color: #334155;
-                        font-weight: 600; font-size: 12px;
-                        border-radius: 8px; border: 1px solid #e2e8f0; }
-                    QPushButton:hover { background: #f1f5f9; }
+                btn.setStyleSheet(f"""
+                    QPushButton {{ background: white; color: #334155;
+                        font-weight: 600; font-size: {font(12)}px;
+                        border-radius: {s(8)}px; border: 1px solid #e2e8f0; }}
+                    QPushButton:hover {{ background: #f1f5f9; }}
                 """)
                 btn.clicked.connect(lambda checked, a=amt: self._add_quick_amount(a))
             quick_layout.addWidget(btn, r, c)
@@ -300,12 +295,7 @@ class CheckoutWindow(QDialog):
     def _set_active_input(self, widget):
         self.active_input = widget
         for inp in self.payment_inputs.values():
-            is_active = inp == widget
-            inp.setStyleSheet(
-                f"padding: 10px 14px; font-size: 18px; font-weight: 700; color: #1e293b; "
-                f"border: {'2px solid #3b82f6' if is_active else '1.5px solid #e2e8f0'}; "
-                f"border-radius: 10px; background: {'#eff6ff' if is_active else 'white'};"
-            )
+            inp.setStyleSheet(self._active_css if inp == widget else self._normal_css)
         widget.setFocus()
 
     def _on_numpad_clicked(self, action: str):
@@ -327,7 +317,7 @@ class CheckoutWindow(QDialog):
             return
         try:
             curr = float(self.active_input.text() or 0)
-            self.active_input.setText(str(int(curr + amount)))
+            self.active_input.setText(str(round(curr + amount)))
         except ValueError:
             pass
 
@@ -341,7 +331,7 @@ class CheckoutWindow(QDialog):
                     other += float(inp.text() or 0)
                 except ValueError:
                     pass
-        self.active_input.setText(str(int(max(0, self.total_amount - other))))
+        self.active_input.setText(str(round(max(0, self.total_amount - other))))
 
     def _on_payment_changed(self):
         if self._is_calculating:
@@ -361,7 +351,7 @@ class CheckoutWindow(QDialog):
 
                 primary_amount = max(0, self.total_amount - other_total)
                 self.primary_input.blockSignals(True)
-                self.primary_input.setText(str(int(primary_amount)))
+                self.primary_input.setText(str(round(primary_amount)))
                 self.primary_input.blockSignals(False)
 
             self._update_remaining_label()
@@ -379,7 +369,7 @@ class CheckoutWindow(QDialog):
         remaining = self.total_amount - total_paid
         if remaining > 0:
             self.lbl_remaining.setText(f"Qolgan summa: {remaining:,.0f} UZS".replace(",", " "))
-            self.lbl_remaining.setStyleSheet("color: #dc2626; font-weight: bold; font-size: 18px;")
+            self.lbl_remaining.setStyleSheet(f"color: #dc2626; font-weight: bold; font-size: {font(18)}px;")
             self.btn_confirm.setEnabled(False)
         else:
             if remaining == 0:
@@ -387,10 +377,15 @@ class CheckoutWindow(QDialog):
             else:
                 self.lbl_remaining.setText(f"QAYTIM: {abs(remaining):,.0f} UZS")
             color = "#16a34a" if remaining == 0 else "#2563eb"
-            self.lbl_remaining.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 18px;")
+            self.lbl_remaining.setStyleSheet(f"color: {color}; font-weight: bold; font-size: {font(18)}px;")
             self.btn_confirm.setEnabled(True)
 
     def _process_checkout(self):
+        if not self.order_data.get("items"):
+            from ui.components.dialogs import InfoDialog
+            InfoDialog(self, "Xatolik", "Savat bo'sh — tovar qo'shing!", kind="error").exec()
+            return
+
         self.btn_confirm.setEnabled(False)
         self.btn_confirm.setText("Yuborilmoqda...")
 
@@ -438,7 +433,7 @@ class CheckoutWindow(QDialog):
         }
 
         self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
-        self.worker.finished.connect(self._on_worker_finished)
+        self.worker.result_ready.connect(self._on_worker_finished)
         self.worker.start()
 
     def _on_worker_finished(self, success: bool, message: str):
@@ -474,6 +469,11 @@ class CheckoutWindow(QDialog):
 
         self.checkout_completed.emit()
         self.accept()
+
+    def reject(self):
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            return  # Worker ishlayotganda dialog yopilmasin
+        super().reject()
 
     def _show_printer_warning(self, failed_printers: list):
         """Printer xatosi haqida foydalanuvchiga ogohlantirish"""

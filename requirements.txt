@@ -2,5 +2,6 @@ PyQt6>=6.6.0
 peewee>=3.17.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+websocket-client>=1.7.0
 pywin32>=306; sys_platform == 'win32'
 pyinstaller>=6.4.0
