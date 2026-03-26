@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QGraphicsDropShadowEffect, QScrollArea,
+    QSizePolicy,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor
@@ -45,7 +46,14 @@ class LoginWindow(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # --- Yuqori qism: karta markazda ---
+        # --- Yuqori qism: karta markazda (scroll area — keyboard chiqqanda scroll bo'ladi) ---
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
         top_area = QWidget()
         top_area.setStyleSheet("background: transparent;")
         top_layout = QVBoxLayout(top_area)
@@ -175,41 +183,6 @@ class LoginWindow(QWidget):
         self.password_input.textChanged.connect(self._sync_kb_display)
         layout.addWidget(self.password_input)
 
-        # ——— Kengaytirilgan sozlamalar (Site name) ———
-        self.advanced_toggle = QPushButton("Kengaytirilgan sozlamalar ▸")
-        self.advanced_toggle.setFixedHeight(s(44))
-        self.advanced_toggle.setCheckable(True)
-        self.advanced_toggle.setStyleSheet(f"""
-            QPushButton {{
-                font-size: {font(12)}px; font-weight: 600; color: #94a3b8;
-                background: transparent; border: none; margin-top: {s(8)}px;
-                text-align: left; padding-left: {s(4)}px;
-            }}
-            QPushButton:checked {{ color: #3b82f6; }}
-        """)
-        self.advanced_toggle.toggled.connect(self._toggle_advanced)
-        layout.addWidget(self.advanced_toggle)
-
-        # Site name (yashirin)
-        self.site_frame = QFrame()
-        self.site_frame.setVisible(False)
-        self.site_frame.setStyleSheet("background: transparent;")
-        site_layout = QVBoxLayout(self.site_frame)
-        site_layout.setContentsMargins(0, 0, 0, 0)
-        site_layout.setSpacing(s(2))
-
-        site_hint = QLabel("Multi-site bench uchun (ixtiyoriy)")
-        site_hint.setStyleSheet(f"font-size: {font(11)}px; color: #94a3b8; background: transparent;")
-        site_layout.addWidget(site_hint)
-
-        self.site_input = ClickableLineEdit()
-        self.site_input.setPlaceholderText("sayt nomi (masalan: mysite.local)")
-        self.site_input.setText(config.get("site", ""))
-        self.site_input.setStyleSheet(INPUT_STYLE)
-        self.site_input.clicked.connect(lambda w: self._activate_field(w, "Sayt nomi"))
-        self.site_input.textChanged.connect(self._sync_kb_display)
-        site_layout.addWidget(self.site_input)
-        layout.addWidget(self.site_frame)
 
         # ——— Xatolik xabari ———
         self.error_label = QLabel("")
@@ -266,11 +239,13 @@ class LoginWindow(QWidget):
         layout.addWidget(footer)
 
         top_layout.addWidget(card)
-        root_layout.addWidget(top_area, stretch=1)
+        scroll_area.setWidget(top_area)
+        root_layout.addWidget(scroll_area, stretch=1)
 
         # --- Pastki qism: inline keyboard ---
         self.keyboard_panel = self._build_keyboard_panel()
         self.keyboard_panel.setVisible(False)
+        self.keyboard_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         root_layout.addWidget(self.keyboard_panel)
 
     # ─── Inline Keyboard ──────────────────────────────────
@@ -283,8 +258,8 @@ class LoginWindow(QWidget):
             }
         """)
         panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(s(16), s(10), s(16), s(12))
-        panel_layout.setSpacing(s(6))
+        panel_layout.setContentsMargins(s(10), s(4), s(10), s(6))
+        panel_layout.setSpacing(s(3))
 
         # Yuqori qator: aktiv field nomi + display + yopish
         top_row = QHBoxLayout()
@@ -301,10 +276,10 @@ class LoginWindow(QWidget):
             background: white; border: 1.5px solid #3b82f6;
             border-radius: {s(8)}px; padding: {s(6)}px {s(12)}px;
         """)
-        self.kb_display.setFixedHeight(s(40))
+        self.kb_display.setFixedHeight(s(30))
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(s(44), s(44))
+        close_btn.setFixedSize(s(32), s(32))
         close_btn.setStyleSheet(f"""
             QPushButton {{
                 background: #ef4444; color: white;
@@ -331,7 +306,7 @@ class LoginWindow(QWidget):
         ]
         for row_keys in rows:
             row_layout = QHBoxLayout()
-            row_layout.setSpacing(s(5))
+            row_layout.setSpacing(s(3))
             for key in row_keys:
                 btn = self._make_key(key)
                 row_layout.addWidget(btn)
@@ -349,27 +324,27 @@ class LoginWindow(QWidget):
             label = '⇧ Aa'
 
         btn = QPushButton(label)
-        btn.setFixedHeight(s(48))
+        btn.setFixedHeight(s(36))
 
         if key.strip() == '⌫':
-            style = f"background:#fee2e2; color:#ef4444; font-size:{font(18)}px; font-weight:bold;"
+            style = f"background:#fee2e2; color:#ef4444; font-size:{font(14)}px; font-weight:bold;"
         elif key.strip() == 'CLR':
-            style = f"background:#fff7ed; color:#ea580c; font-size:{font(11)}px; font-weight:bold;"
+            style = f"background:#fff7ed; color:#ea580c; font-size:{font(10)}px; font-weight:bold;"
         elif key.strip() == 'CAPS':
-            style = f"background:#e0e7ff; color:#4338ca; font-size:{font(13)}px; font-weight:bold;"
+            style = f"background:#e0e7ff; color:#4338ca; font-size:{font(11)}px; font-weight:bold;"
         elif 'SPACE' in key:
-            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(13)}px; font-weight:bold;"
-            btn.setMinimumWidth(s(120))
+            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(11)}px; font-weight:bold;"
+            btn.setMinimumWidth(s(90))
         elif key.strip().isdigit():
-            style = f"background:#e0e7ff; color:#3730a3; font-size:{font(16)}px; font-weight:bold;"
+            style = f"background:#e0e7ff; color:#3730a3; font-size:{font(13)}px; font-weight:bold;"
         else:
-            style = f"background:white; color:#1e293b; font-size:{font(15)}px; font-weight:600;"
+            style = f"background:white; color:#1e293b; font-size:{font(13)}px; font-weight:600;"
 
         btn.setStyleSheet(f"""
             QPushButton {{
                 {style}
                 border: 1px solid #e2e8f0;
-                border-radius: {s(7)}px;
+                border-radius: {s(5)}px;
             }}
             QPushButton:pressed {{ background: #dbeafe; }}
         """)
@@ -443,9 +418,6 @@ class LoginWindow(QWidget):
         lbl.setStyleSheet(style)
         return lbl
 
-    def _toggle_advanced(self, checked: bool):
-        self.site_frame.setVisible(checked)
-        self.advanced_toggle.setText("Kengaytirilgan sozlamalar ▾" if checked else "Kengaytirilgan sozlamalar ▸")
 
     def _show_error(self, msg: str):
         self.error_label.setText(f"⚠  {msg}")
@@ -462,7 +434,7 @@ class LoginWindow(QWidget):
         url = self.url_input.text().strip()
         user = self.user_input.text().strip()
         password = self.password_input.text().strip()
-        site = self.site_input.text().strip() if self.advanced_toggle.isChecked() else ""
+        site = ""
 
         # Validatsiya
         if not url:
