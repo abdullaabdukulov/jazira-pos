@@ -141,6 +141,7 @@ class SyncWorker(QThread):
                     item_code=item_code,
                     item_name=item_data.get("item_name"),
                     item_group=item_groups_map.get(item_code, ""),
+                    course=item_data.get("course", ""),
                     image=item_data.get("item_image"),
                     uom=DEFAULT_UOM,
                 ).on_conflict_replace().execute()

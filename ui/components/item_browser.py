@@ -438,7 +438,7 @@ class ItemBrowser(QWidget):
 
     def load_categories(self):
         try:
-            cats = [r.item_group for row in Item.select(Item.item_group).distinct() if (r := row).item_group]
+            cats = [r.course for row in Item.select(Item.course).distinct() if (r := row).course]
             self._add_cat_btn("Barchasi", True)
             for c in sorted(cats):
                 self._add_cat_btn(c)
@@ -508,7 +508,7 @@ class ItemBrowser(QWidget):
         try:
             query = Item.select()
             if self.current_category:
-                query = query.where(Item.item_group == self.current_category)
+                query = query.where(Item.course == self.current_category)
             if search:
                 query = query.where(Item.item_name.contains(search) | Item.item_code.contains(search))
 

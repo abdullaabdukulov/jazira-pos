@@ -18,6 +18,7 @@ class Item(BaseModel):
     item_code = CharField(unique=True, index=True)
     item_name = CharField()
     item_group = CharField(null=True)
+    course = CharField(null=True)
     barcode = CharField(null=True, index=True)
     uom = CharField(null=True)
     image = CharField(null=True)
