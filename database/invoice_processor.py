@@ -77,7 +77,7 @@ def print_invoice(invoice_name: str, payload: dict, payments: list):
 
         order_data = payload.copy()
         total_amount = sum(
-            float(item.get("qty", 0)) * float(item.get("rate", 0))
+            float(item.get("qty", 0)) * float(item.get("rate", item.get("price", 0)))
             for item in payload.get("items", [])
         )
         order_data["total_amount"] = total_amount

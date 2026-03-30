@@ -129,6 +129,10 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
     """
     results = {}
     qz_cfg = _get_qz_config()
+
+    if not qz_cfg.get("qz_print", 0):
+        return results  # QZ Tray o'chirilgan — chop etmaslik
+
     qz_host = qz_cfg["qz_host"]
 
     # 1. Mijoz cheki
@@ -196,6 +200,8 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
 def open_cash_drawer() -> bool:
     """Cash drawer ochish (QZ Tray orqali, customer printerga)."""
     qz_cfg = _get_qz_config()
+    if not qz_cfg.get("qz_print", 0):
+        return False
     customer_printer = qz_cfg["customer_qz_printer"]
     if not customer_printer:
         logger.warning("Mijoz QZ printeri topilmadi — cash drawer ochib bo'lmaydi")
@@ -208,6 +214,8 @@ def open_cash_drawer() -> bool:
 def reprint_receipt(order_data: dict, payments_list: list) -> bool:
     """Faqat mijoz printeriga qayta chop etish (QZ Tray)."""
     qz_cfg = _get_qz_config()
+    if not qz_cfg.get("qz_print", 0):
+        return False
     customer_printer = qz_cfg["customer_qz_printer"]
     if not customer_printer:
         logger.warning("Mijoz QZ printeri topilmadi — qayta chop etib bo'lmaydi")
