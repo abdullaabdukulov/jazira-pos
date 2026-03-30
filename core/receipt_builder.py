@@ -1,7 +1,7 @@
 """ESC/POS chek ma'lumotlarini yaratish — faqat baytlar, I/O yo'q.
 
 Bu modul printer.py dan ajratilgan: chek formatini tayyorlaydi,
-lekin printerga yuborish boshqa modulda (qz_printer.py).
+lekin printerga yuborish boshqa modulda (printer.py).
 """
 
 from datetime import datetime

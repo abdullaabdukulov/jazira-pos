@@ -1,107 +1,18 @@
-# QZ Tray — Windows uchun to'liq o'rnatish va sozlash qo'llanmasi
+# Termal printer sozlash qo'llanmasi — USB to'g'ridan-to'g'ri chop etish
 
-Bu qo'llanma Windows kompyuterda QZ Tray orqali termal printerga chek chop etishni CMD buyruqlari orqali to'liq sozlashni o'rgatadi.
+Bu qo'llanma Windows va Linux da USB termal printer orqali chek chop etishni sozlashni o'rgatadi.
 
----
-
-## 1-qadam. Java o'rnatish (talab)
-
-QZ Tray ishlashi uchun Java 11+ kerak.
-
-```cmd
-:: Java borligini tekshirish
-java -version
-```
-
-Agar `java` topilmasa — https://adoptium.net dan **Temurin JDK 17 LTS** ni yuklab oling.
-
-Yuklab olgandan keyin:
-
-```cmd
-:: O'rnatishni tekshirish
-java -version
-
-:: Natija shunga o'xshash bo'lishi kerak:
-:: openjdk version "17.0.x" ...
-```
-
-> Agar `java` hali tanilmasa, CMD ni yopib qaytadan oching yoki quyidagi yo'lni qo'shing:
-> ```cmd
-> setx PATH "%PATH%;C:\Program Files\Eclipse Adoptium\jdk-17.0.x-hotspot\bin"
-> ```
+> **QZ Tray kerak emas!** Ilova to'g'ridan-to'g'ri OS printer API orqali ishlaydi:
+> - Windows: `win32print` (pywin32)
+> - Linux: `lp` buyrug'i
 
 ---
 
-## 2-qadam. QZ Tray o'rnatish
+## 1-qadam. USB printerni ulash va drayverni o'rnatish
 
-1. https://qz.io/download saytiga kiring
-2. **Windows (.exe)** ni yuklab oling
-3. O'rnating — standart sozlamalar bilan:
+### Windows
 
-```cmd
-:: Yuklab olish (agar curl mavjud bo'lsa)
-curl -L -o qz-tray-2.2.4.exe https://github.com/qzind/tray/releases/download/v2.2.4/qz-tray-2.2.4.exe
-
-:: O'rnatish (GUI installer ochiladi)
-qz-tray-2.2.4.exe
-```
-
-O'rnatgandan keyin QZ Tray tray icon sifatida ishlaydi (pastki o'ng burchakda).
-
----
-
-## 3-qadam. QZ Tray ishlayotganini tekshirish
-
-```cmd
-:: WebSocket portini tekshirish (8182 = QZ Tray)
-netstat -an | findstr 8182
-
-:: Natija: TCP 0.0.0.0:8182 ... LISTENING — QZ Tray ishlayapti
-:: Bo'sh natija — QZ Tray ishlamayapti
-```
-
-Agar ishlamasa:
-
-```cmd
-:: QZ Tray ni qo'lda ishga tushirish
-"C:\Program Files\QZ Tray\qz-tray.exe"
-
-:: Yoki Windows xizmati sifatida tekshirish
-sc query "QZ Tray"
-```
-
----
-
-## 4-qadam. Windows printerlarni tekshirish
-
-QZ Tray Windows'da o'rnatilgan printerlarni aniqlaydi. Printer o'rnatilganini tekshiring:
-
-```cmd
-:: Barcha o'rnatilgan printerlarni ko'rish
-wmic printer get name,portname,drivername
-
-:: Yoki PowerShell orqali
-powershell "Get-Printer | Format-Table Name, PortName, DriverName"
-```
-
-**Natijada siz printer nomini ko'rasiz**, masalan:
-
-```
-Name                    PortName       DriverName
-XP-365B                 USB001         POS Printer Driver
-Xprinter XP-80C         USB002         Generic / Text Only
-```
-
-> **Muhim:** `Name` ustunidagi nom — QZ Tray ga beriladigan printer nomi.
-> Masalan: `XP-365B`, `Xprinter XP-80C`
-
----
-
-## 5-qadam. USB printer drayverini o'rnatish
-
-Ko'p termal printerlar drayversiz ishlamaydi.
-
-### A. Printer ishlab chiqaruvchidan drayver o'rnatish
+#### A. Ishlab chiqaruvchidan drayver o'rnatish (tavsiya)
 
 | Printer | Drayver manbasi |
 |---------|----------------|
@@ -109,12 +20,12 @@ Ko'p termal printerlar drayversiz ishlamaydi.
 | Epson TM-T20/T82 | https://download.ebz.epson.net/dsc/search/01/search |
 | Star TSP143 | https://www.starmicronics.com → Support |
 
-### B. Generic / Text Only drayver (universal)
+Drayverni yuklab oling, o'rnating, printerni USB orqali ulang.
 
-Agar mahsus drayver topilmasa:
+#### B. Generic / Text Only drayver (agar mahsus drayver topilmasa)
 
 ```cmd
-:: Printers & Scanners ni ochish
+:: Printers & Scanners oynasini ochish
 rundll32 printui.dll,PrintUIEntry /il
 ```
 
@@ -123,121 +34,148 @@ rundll32 printui.dll,PrintUIEntry /il
 3. Manufacturer: **Generic**, Printer: **Generic / Text Only**
 4. Printer nomini bering: masalan `ThermalPOS`
 
----
+### Linux
 
-## 6-qadam. Printer ishlashini CMD dan tekshirish
+```bash
+# CUPS o'rnatilganini tekshirish
+sudo apt install cups
 
-```cmd
-:: "XP-365B" o'rniga o'z printer nomingizni yozing
-echo Test print | lpr -S localhost -P "XP-365B"
-```
+# Printer USB da ko'rinishini tekshirish
+lsusb | grep -i printer
 
-Yoki to'g'ridan to'g'ri:
-
-```cmd
-:: Notepad orqali test sahifa
-notepad /p test.txt
-
-:: Yoki PowerShell orqali
-powershell "Get-Printer -Name 'XP-365B' | Out-Printer"
+# CUPS web interfeys orqali printer qo'shish
+# http://localhost:631 → Administration → Add Printer
 ```
 
 ---
 
-## 7-qadam. QZ Tray xavfsizlik sertifikati
+## 2-qadam. Printer nomini aniqlash
 
-QZ Tray ishonchli manba ekanligini tasdiqlash uchun sertifikat kerak.
-Sinov uchun QZ Tray demo sertifikatidan foydalanish mumkin:
+Bu nom ERPNext da va config.json da yoziladigan nom.
 
-```cmd
-:: QZ Tray sozlamalarini ochish (tray icon ustiga o'ng tugma → Advanced → Site Manager)
-:: Yoki brauzerda:
-start http://localhost:8182
-```
-
-**Muhim:** Production uchun QZ Tray litsenziya (https://qz.io/pricing) sotib olish tavsiya etiladi.
-
-Demo rejimda QZ Tray har safar "Allow" dialogni ko'rsatadi.
-Buni o'chirish uchun QZ Tray properties faylida:
+### Windows
 
 ```cmd
-:: QZ Tray properties faylini ochish
-notepad "C:\Program Files\QZ Tray\qz-tray.properties"
+wmic printer get name
 ```
 
-Quyidagini qo'shing (faqat test/development uchun):
-
-```properties
-security.data.enabled=false
-security.file.enabled=false
+Natija:
+```
+Name
+Microsoft Print to PDF
+XP-365B
 ```
 
-QZ Tray ni qayta ishga tushiring:
+### Linux
 
-```cmd
-:: QZ Tray ni to'xtatish
-taskkill /f /im qz-tray.exe
-
-:: Qayta ishga tushirish
-"C:\Program Files\QZ Tray\qz-tray.exe"
+```bash
+lpstat -p
 ```
+
+Natija:
+```
+printer XP-365B is idle.
+```
+
+> **Muhim:** Printer nomi **100% to'g'ri** bo'lishi kerak. Hatto bitta probel farqi ham xatolikka olib keladi.
 
 ---
 
-## 8-qadam. QZ Tray WebSocket ulanishini tekshirish
+## 3-qadam. Printer ishlashini tekshirish
 
-Python orqali tekshirish (URY POS venv dan):
+### Windows — Python orqali (tavsiya)
 
 ```cmd
 cd C:\ury_desktop_pos
 venv\Scripts\activate
 
-python -c "import websocket; ws = websocket.create_connection('ws://localhost:8182', timeout=5); print('QZ Tray ulanish muvaffaqiyatli!'); ws.close()"
+python -c "
+from core.printer import _send_raw
+from core.receipt_builder import build_test_receipt
+
+data = build_test_receipt('XP-365B')
+result = _send_raw('XP-365B', data)
+print('Natija:', 'Muvaffaqiyatli!' if result else 'Xatolik!')
+"
 ```
 
-**Natija:**
-- `QZ Tray ulanish muvaffaqiyatli!` — hammasi ishlayapti
-- `ConnectionRefusedError` — QZ Tray ishlamayapti (3-qadamga qayting)
-- `ModuleNotFoundError: websocket` — `pip install websocket-client` qiling
+### Linux — Python orqali
+
+```bash
+cd /opt/ury_desktop_pos
+source venv/bin/activate
+
+python3 -c "
+from core.printer import _send_raw
+from core.receipt_builder import build_test_receipt
+
+data = build_test_receipt('XP-365B')
+result = _send_raw('XP-365B', data)
+print('Natija:', 'Muvaffaqiyatli!' if result else 'Xatolik!')
+"
+```
+
+### Windows — CMD orqali oddiy test
+
+```cmd
+:: Test sahifa chop etish
+echo Test page | lpr -S localhost -P "XP-365B"
+```
+
+### Linux — buyruq orqali
+
+```bash
+echo "Test page" | lp -d XP-365B -o raw
+```
+
+**Muvaffaqiyatli bo'lsa** — printerdan test cheki yoki matn chiqadi.
 
 ---
 
-## 9-qadam. Frappe backend sozlamalari
+## 4-qadam. Frappe ERPNext da printer sozlash
 
-QZ Tray sozlamalari Frappe **POS Profile** da saqlanadi.
+### A. POS Profile — kassa printeri
 
-### A. POS Profile da QZ sozlamalarini yoqish
-
-Frappe UI dan:
 1. **POS Profile** → o'z profilingizni oching
-2. `qz_print` maydonni **1** qiling (yoqish)
-3. `qz_host` ga **localhost** yozing (yoki tarmoqdagi kompyuter IP si)
-4. `customer_qz_printer_name` ga mijoz cheki printerining nomini yozing (masalan: `XP-365B`)
-5. Saqlang
+2. **Chop etishni yoqish** — belgilang (✓)
+3. **Kassa printer nomi** — Windows/Linux dagi printer nomi (`XP-365B`)
+4. Saqlang
 
-### B. Production Unit printerlarini sozlash
+### B. URY Production Unit — oshxona/bar printerlari
 
-Frappe UI dan:
 1. **URY Production Unit** ro'yxatiga o'ting
 2. Har bir unit uchun (masalan: Oshpaz, Bar):
-   - `qz_printer_name` — shu unit uchun kitchen printer nomi (masalan: `Kitchen-Printer-1`)
-   - **URY Production Item Groups** — shu unitga tegishli item guruhlarni tanlang
+   - **Printer nomi** — shu unit uchun printer nomi (masalan: `Kitchen-Printer`)
+   - **Item Groups** — shu printerga chiqadigan tovar guruhlarini tanlang
 3. Saqlang
 
-### C. Sozlamalar URY POS Desktop ga sync bo'lishi
+### C. Bitta printer bilan test (sinov uchun)
 
-Ilovani qayta ishga tushiring — login dan keyin sync avtomatik amalga oshadi.
+Agar bitta printeringiz bo'lsa — hamma joyga shu nom yozing:
+
+| Sozlama | Qiymat |
+|---------|--------|
+| POS Profile → Kassa printer nomi | `XP-365B` |
+| Oshpaz unit → Printer nomi | `XP-365B` |
+| Bar unit → Printer nomi | `XP-365B` |
+
+Natija: bitta printerdan ketma-ket 3 ta chek chiqadi (mijoz, oshxona, bar).
+
+---
+
+## 5-qadam. Sozlamalar POS ilovasiga sync bo'lishi
+
+Ilovani qayta ishga tushiring. Login dan keyin sync avtomatik amalga oshadi.
 `config.json` da quyidagi maydonlar paydo bo'ladi:
 
 ```json
 {
   "qz_print": 1,
-  "qz_host": "localhost",
   "customer_qz_printer": "XP-365B",
   "production_units": [
     {
       "name": "Oshpaz",
-      "qz_printer_name": "Kitchen-Printer-1",
+      "qz_printer_name": "Kitchen-Printer",
       "item_groups": ["Oshpaz", "Taomlar"]
     },
     {
@@ -248,26 +186,6 @@ Ilovani qayta ishga tushiring — login dan keyin sync avtomatik amalga oshadi.
   ]
 }
 ```
-
----
-
-## 10-qadam. To'liq test — chek chop etish
-
-```cmd
-cd C:\ury_desktop_pos
-venv\Scripts\activate
-
-python -c "
-from core.qz_printer import _send_to_qz
-from core.receipt_builder import build_test_receipt
-
-data = build_test_receipt('XP-365B')
-result = _send_to_qz('XP-365B', data, 'localhost')
-print('Natija:', 'Muvaffaqiyatli!' if result else 'Xatolik!')
-"
-```
-
-**Muvaffaqiyatli bo'lsa** — printerdan test cheki chiqadi.
 
 ---
 
@@ -285,98 +203,70 @@ Kassir "TO'LOV" bosadi
         +---> build_customer_receipt() → ESC/POS bytes
         |         |
         |         v
-        |     _send_to_qz("XP-365B", bytes, "localhost")
+        |     _send_raw("XP-365B", bytes)
         |         |
         |         v
-        |     WebSocket ws://localhost:8182 → QZ Tray → Printer
+        |     win32print API (Windows) yoki lp (Linux) → Printer
         |
         +---> Production unit lar uchun (har biri alohida):
               |
               +---> item_groups bo'yicha filtrlash
               +---> build_production_receipt() → ESC/POS bytes
-              +---> _send_to_qz("Kitchen-Printer-1", bytes, "localhost")
+              +---> _send_raw("Kitchen-Printer", bytes)
 ```
 
----
+**Avvalgi usul (QZ Tray) bilan farqi:**
 
-## Tarmoqdagi boshqa kompyuterdan chop etish
-
-Agar QZ Tray bitta kompyuterda, POS dasturi boshqa kompyuterda bo'lsa:
-
-```
-POS kompyuter (192.168.1.10) ---WebSocket---> QZ Tray kompyuter (192.168.1.20:8182)
-```
-
-1. QZ Tray kompyuterda Windows Firewall dan **8182** portni oching:
-
-```cmd
-:: Administrator CMD da:
-netsh advfirewall firewall add rule name="QZ Tray" dir=in action=allow protocol=TCP localport=8182
-```
-
-2. QZ Tray properties faylida masofaviy ulanishlarga ruxsat:
-
-```cmd
-notepad "C:\Program Files\QZ Tray\qz-tray.properties"
-```
-
-Qo'shing:
-
-```properties
-websocket.origin=*
-```
-
-3. Frappe POS Profile da `qz_host` ni **192.168.1.20** ga o'zgartiring
+| | QZ Tray (eski) | To'g'ridan-to'g'ri USB (yangi) |
+|---|---|---|
+| Java | Kerak (JDK 11+) | **Kerak emas** |
+| QZ Tray dasturi | Kerak (o'rnatish + litsenziya) | **Kerak emas** |
+| WebSocket | ws://localhost:8182 | **Yo'q** |
+| Sertifikat | QZ sertifikat kerak | **Kerak emas** |
+| Tarmoq printer | Ha (boshqa kompyuterga) | Yo'q (faqat lokal USB) |
+| Tezlik | ~200ms (WebSocket overhead) | **~50ms** (to'g'ridan-to'g'ri) |
+| Ishonchlilk | QZ crash = chek chiqmaydi | **OS printer drayveriga bog'liq** |
 
 ---
 
 ## Muammolarni bartaraf etish (Troubleshooting)
 
-### QZ Tray ishlamayapti
-
-```cmd
-:: Tekshiring
-netstat -an | findstr 8182
-
-:: Qayta ishga tushirish
-taskkill /f /im qz-tray.exe
-timeout /t 2
-"C:\Program Files\QZ Tray\qz-tray.exe"
-```
-
 ### Printer topilmayapti
 
 ```cmd
-:: Printer nomini qaytadan tekshiring — nomi to'liq mos kelishi SHART
+:: Windows — printer nomini qaytadan tekshiring
 wmic printer get name
 
-:: QZ Tray loglarni tekshiring
-type "C:\Users\%USERNAME%\.qz\logs\debug.log"
+:: Linux
+lpstat -p
+
+:: Python orqali mavjud printerlarni ko'rish
+python -c "
+import win32print
+printers = [p[2] for p in win32print.EnumPrinters(
+    win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+)]
+print('Mavjud printerlar:', printers)
+"
 ```
 
-> **Muhim:** QZ Tray ga beriladigan printer nomi Windows da ko'rinadigan nom bilan **100% bir xil** bo'lishi kerak. Hatto bir probel farqi ham xatolikka olib keladi.
-
-### WebSocket ulanish xatosi
-
-```cmd
-:: Port band bo'lmaganini tekshirish
-netstat -ano | findstr 8182
-
-:: Agar boshqa dastur 8182 portni band qilgan bo'lsa
-:: PID ni toping va to'xtating:
-taskkill /f /pid <PID_RAQAMI>
-```
+> Printer nomi **harf-ma-harf** to'g'ri bo'lishi kerak!
 
 ### Chek chiqmayapti lekin xatolik yo'q
 
-1. `config.json` ni tekshiring — `qz_print` **1** bo'lishi kerak
-2. `customer_qz_printer` bo'sh emasligini tekshiring
-3. Production unit lar uchun — `item_groups` to'g'ri ekanligini tekshiring
+1. `config.json` ni tekshiring:
+   - `qz_print` = **1** bo'lishi kerak (bu flag yoqadi)
+   - `customer_qz_printer` = printer nomi bo'sh emasligini tekshiring
 
 ```cmd
-:: config.json ni ko'rish
+:: Windows
 type config.json
+
+:: Linux
+cat config.json
 ```
+
+2. Production unit lar uchun — `item_groups` to'g'ri ekanligini tekshiring
 
 ### Kirill/O'zbek harflar noto'g'ri chiqyapti
 
@@ -390,103 +280,79 @@ Agar harflar buzilsa:
 
 ```cmd
 python -c "
-from core.qz_printer import open_cash_drawer
+from core.printer import open_cash_drawer
 result = open_cash_drawer()
 print('Cash drawer:', 'Ochildi' if result else 'Xatolik')
 "
 ```
 
 Agar xatolik bo'lsa:
-- Cash drawer printer ga **RJ-11/RJ-12 kabel** bilan ulangan bo'lishi kerak
+- Cash drawer printerga **RJ-11/RJ-12 kabel** bilan ulangan bo'lishi kerak
 - Ba'zi printerlarda drawer port yo'q — tekshiring
+
+### Linux da "permission denied" xatosi
+
+```bash
+# Foydalanuvchini lpadmin guruhiga qo'shish
+sudo usermod -aG lpadmin $USER
+
+# CUPS xizmatini qayta ishga tushirish
+sudo systemctl restart cups
+```
 
 ---
 
 ## Ma'lum bo'lgan cheklovlar va edge case lar
 
-### 1. QZ Tray to'satdan to'xtasa
+### 1. Printer kabeli uzilib qolsa
 
-Buyurtma **yo'qolmaydi** — Frappe serverga allaqachon saqlangan. Faqat chek chiqmaydi.
-Kassirga ogohlantirish dialog oynasi ko'rsatiladi.
-
-### 2. Printer kabel uzilib qolsa
-
-QZ Tray xatolik qaytaradi → `print_receipt()` `False` qaytaradi → kassirga ogohlantirish ko'rsatiladi.
+OS xatolik qaytaradi → `_send_raw()` `False` qaytaradi → kassirga ogohlantirish ko'rsatiladi.
 Buyurtma saqlanadi, chekni keyinroq qayta chop etish mumkin.
 
-### 3. Item kitchen printerga yo'naltirilmasa
+### 2. Item kitchen printerga yo'naltirilmasa
 
-Agar itemning `item_group` si hech bir production unitning `item_groups` ro'yxatida bo'lmasa:
+Agar itemning guruhi hech bir production unitning `item_groups` ro'yxatida bo'lmasa:
 - **Mijoz chekida** — item ko'rinadi (to'g'ri)
 - **Kitchen chekda** — item **ko'rinmaydi** (xavfli!)
-- Oshxona bu itemni tayyorlamaslik xavfi bor
 
-**Yechim:** Frappe da har bir itemning `item_group` si kamida bitta production unitga biriktirilganini tekshiring.
+**Yechim:** Frappe da har bir item guruhi kamida bitta production unitga biriktirilganini tekshiring.
 
-### 4. Offline rejimda chop etish
+### 3. Offline rejimda chop etish
 
 Agar internet yo'q bo'lsa:
 - Buyurtma lokal SQLite ga saqlanadi
 - Printer sozlamalari **oxirgi sync** dan olinadi
-- Agar sync dan keyin server dagi printer nomi o'zgargan bo'lsa — chek **eski** printerga ketadi
+- Chek lokal printerga chop etiladi (printer ishlayotgan bo'lsa)
 
-### 5. Juda uzun item nomlari
+### 4. Juda uzun item nomlari
 
 - Mijoz chekida: 48 belgidan uzun nomlar 2 qatorga bo'linadi
 - Kitchen chekda: 24 belgidan uzun nomlar kesiladi
-- Ma'lumot yo'qolmaydi, faqat ko'rinishi o'zgaradi
 
-### 6. Maxsus belgilar (emoji, iyeroglif)
+### 5. Maxsus belgilar (emoji, iyeroglif)
 
 - CP866 da qo'llab-quvvatlanmaydigan belgilar `?` ga almashtiriladi
 - O'zbek/rus harflar to'g'ri ishlaydi
-- Emoji va noyob Unicode belgilar chekda `?` bo'lib chiqadi
 
-### 7. Bir vaqtda bir nechta buyurtma chop etilsa
+### 6. Tarmoq printer (boshqa kompyuter)
 
-Har bir chop etish alohida WebSocket ulanish ochadi va yopadi.
-QZ Tray bir vaqtda bir nechta so'rovni qabul qiladi — muammo yo'q.
-
-### 8. WebSocket timeout (7 sekund)
-
-Agar QZ Tray 7 sekundda javob bermasa:
-- Chop etish bekor qilinadi
-- Log ga yoziladi
-- Buyurtma saqlanadi
-- Kassirga ogohlantirish ko'rsatiladi
-
----
-
-## QZ Tray ni Windows bilan avtomatik ishga tushirish
-
-```cmd
-:: Startup papkasiga shortcut qo'shish
-copy "C:\Program Files\QZ Tray\qz-tray.exe" "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\"
-
-:: Yoki registry orqali
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "QZ Tray" /t REG_SZ /d "\"C:\Program Files\QZ Tray\qz-tray.exe\"" /f
-```
-
-Tekshirish:
-
-```cmd
-reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "QZ Tray"
-```
+Hozirgi versiya faqat **lokal USB printerlarni** qo'llab-quvvatlaydi.
+Agar printer boshqa kompyuterda bo'lsa:
+- Windows: printerning **shared** qilib, boshqa kompyuterda **network printer** sifatida qo'shish → u holda `wmic printer get name` da ko'rinadi
+- Linux: CUPS da remote printer qo'shish → `lpstat -p` da ko'rinadi
 
 ---
 
 ## Tez tekshirish ro'yxati (Checklist)
 
 ```
-[ ] Java 11+ o'rnatilgan              → java -version
-[ ] QZ Tray o'rnatilgan               → netstat -an | findstr 8182
-[ ] Printer drayveri o'rnatilgan       → wmic printer get name
-[ ] Printer nomi to'g'ri yozilgan     → config.json → customer_qz_printer
-[ ] qz_print = 1                      → config.json
-[ ] qz_host = "localhost"             → config.json
-[ ] websocket-client o'rnatilgan      → pip list | findstr websocket
-[ ] Production unit lar sozlangan     → config.json → production_units
-[ ] Item groups to'g'ri biriktirilgan → Frappe → URY Production Unit
-[ ] Test chek chiqdi                  → python test script yuqorida
-[ ] QZ Tray autostart sozlangan       → registry yoki startup papka
+[ ] Printer USB orqali ulangan
+[ ] Printer drayveri o'rnatilgan        → wmic printer get name / lpstat -p
+[ ] Printer nomi to'g'ri yozilgan       → ERPNext → POS Profile
+[ ] Chop etish yoqilgan                 → POS Profile → "Chop etishni yoqish" ✓
+[ ] Kassa printer nomi sozlangan        → POS Profile → "Kassa printer nomi"
+[ ] Production unit printer sozlangan   → URY Production Unit → "Printer nomi"
+[ ] Item groups to'g'ri biriktirilgan   → URY Production Unit → Item Groups
+[ ] Test chek chiqdi                    → python test script (3-qadam)
+[ ] POS ilova sync qilindi              → Login yoki "Sinxronlash" tugmasi
 ```

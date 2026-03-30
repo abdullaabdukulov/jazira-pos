@@ -73,7 +73,7 @@ def submit_invoice(api, payload: dict, invoice_name: str, payments: list):
 def print_invoice(invoice_name: str, payload: dict, payments: list):
     """Lokal printer orqali chop etish"""
     try:
-        from core.qz_printer import print_receipt
+        from core.printer import print_receipt
 
         order_data = payload.copy()
         total_amount = sum(

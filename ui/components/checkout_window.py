@@ -10,7 +10,7 @@ from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
 from database.models import PendingInvoice, db
-from core.qz_printer import print_receipt
+from core.printer import print_receipt
 from ui.components.numpad import TouchNumpad
 from ui.components.dialogs import ClickableLineEdit
 from ui.scale import s, font

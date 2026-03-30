@@ -6,7 +6,7 @@ Frappe ERPNext (URY moduli) uchun oflayn rejimda ishlaydigan Desktop POS ilovasi
 
 - Sensorli ekranga moslashtirilgan to'liq POS interfeys
 - Oflayn rejim — internet yo'qligida ham sotuv davom etadi
-- QZ Tray orqali ESC/POS termal printerlarga chek chiqarish
+- USB termal printerlarga to'g'ridan-to'g'ri ESC/POS chek chiqarish
 - Kassa ochish/yopish (POS Opening/Closing)
 - Buyurtma tarixi va bekor qilish
 - Ko'p tabli sotuv (bir vaqtda bir nechta savat)
@@ -22,7 +22,7 @@ Frappe ERPNext (URY moduli) uchun oflayn rejimda ishlaydigan Desktop POS ilovasi
 | UI Framework | PyQt6 |
 | Ma'lumotlar bazasi | SQLite (WAL mode) + Peewee ORM |
 | Backend API | Frappe/ERPNext REST API (requests) |
-| Printer | QZ Tray (WebSocket) + ESC/POS |
+| Printer | win32print (Windows) / lp (Linux) + ESC/POS |
 | Build | PyInstaller |
 
 ## Loyiha strukturasi
@@ -43,7 +43,7 @@ ury_desktop_pos/
 │   ├── exceptions.py           # Maxsus xatolar
 │   ├── logger.py               # Rotating file logger
 │   ├── receipt_builder.py      # ESC/POS chek formatlash
-│   └── qz_printer.py           # QZ Tray WebSocket integratsiya
+│   └── printer.py              # USB printer orqali chop etish
 │
 ├── database/                   # Ma'lumotlar bazasi
 │   ├── models.py               # Peewee ORM modellari
@@ -80,27 +80,21 @@ ury_desktop_pos/
 
 - Python 3.10+
 - Frappe server (URY moduli o'rnatilgan)
-- QZ Tray (printer uchun, ixtiyoriy)
+- USB termal printer (XPrinter, Epson, Star va boshqalar)
 
 ### Linux
 
 ```bash
-# Virtual muhit yaratish
 python3 -m venv venv
 source venv/bin/activate
-
-# Paketlar o'rnatish
 pip install -r requirements.txt
 ```
 
 ### Windows
 
-```bash
-# Virtual muhit yaratish
+```bat
 python -m venv venv
 venv\Scripts\activate
-
-# Paketlar o'rnatish
 pip install -r requirements.txt
 ```
 
@@ -119,18 +113,12 @@ python main.py
 Birinchi marta ishga tushirilganda:
 
 1. Login oynasi ochiladi — server URL, login va parolni kiriting
-2. Login muvaffaqiyatli bo'lganda barcha ma'lumotlar sinxronizatsiya qilinadi:
-   - POS profil sozlamalari
-   - Tovarlar menusi
-   - Mijozlar ro'yxati
-   - To'lov usullari
-   - Printer sozlamalari
-   - Production unit konfiguratsiyasi
+2. Login muvaffaqiyatli bo'lganda barcha ma'lumotlar sinxronizatsiya qilinadi
 3. Kassa ochish dialogi ko'rsatiladi
 
 ## EXE ga build qilish (PyInstaller)
 
-### Linux (AppImage/binary)
+### Linux
 
 ```bash
 source venv/bin/activate
@@ -143,19 +131,10 @@ pyinstaller --noconfirm --onefile --windowed \
   --hidden-import="PyQt6.QtGui" \
   --hidden-import="PyQt6.QtWidgets" \
   --hidden-import="peewee" \
-  --hidden-import="websocket" \
   main.py
 ```
 
-Tayyor fayl: `dist/JaziraPOS`
-
-```bash
-# Ishga tushirish
-chmod +x dist/JaziraPOS
-./dist/JaziraPOS
-```
-
-### Windows EXE
+### Windows
 
 ```bat
 venv\Scripts\activate
@@ -168,56 +147,56 @@ pyinstaller --noconfirm --onefile --windowed ^
   --hidden-import="PyQt6.QtGui" ^
   --hidden-import="PyQt6.QtWidgets" ^
   --hidden-import="peewee" ^
-  --hidden-import="websocket" ^
-  --icon="NONE" ^
+  --hidden-import="win32print" ^
   main.py
 ```
 
 Tayyor fayl: `dist\JaziraPOS.exe`
 
-### Build eslatmalari
+## Printer sozlash
 
-- `config.json`, `.env`, `pos_data.db` fayllar EXE ichiga kiritilmaydi — ular dastur ishga tushganda avtomatik yaratiladi
-- Birinchi marta EXE ishga tushganda login oynasi ochiladi
-- `config.example.json` faqat namuna sifatida kiritiladi
-- Windows da ikonka qo'shish uchun `--icon="icon.ico"` parametrini o'zgartiring
+Ilova USB printerga to'g'ridan-to'g'ri ESC/POS baytlar yuboradi. QZ Tray yoki boshqa vositachi dastur kerak emas.
 
-### Spec fayl bilan build (murakkab holatlar uchun)
+### 1. Printerni ulash va drayver o'rnatish
 
-Agar `--onefile` rejimida muammo bo'lsa, avval spec fayl yarating:
+1. Termal printerni USB orqali kompyuterga ulang
+2. Printer drayverini o'rnating (ishlab chiqaruvchidan yoki Generic / Text Only)
+3. Printer nomini oling:
 
-```bash
-pyinstaller --name "JaziraPOS" --windowed --onefile main.py
+```bat
+:: Windows
+wmic printer get name
 ```
 
-Bu `JaziraPOS.spec` faylini yaratadi. Keyin uni tahrirlang va qayta build qiling:
-
 ```bash
-pyinstaller JaziraPOS.spec
+# Linux
+lpstat -p
 ```
 
-## Printer sozlash (QZ Tray)
+### 2. Frappe ERPda sozlash
 
-Ilova QZ Tray orqali ESC/POS printerlarga chek yuboradi.
+**POS Profile:**
 
-### QZ Tray o'rnatish
-
-1. [qz.io](https://qz.io/) saytidan QZ Tray ni yuklab o'rnating
-2. QZ Tray ishga tushganiga ishonch hosil qiling (system tray da ikonka)
-3. Standart port: `ws://localhost:8182`
-
-### Printer sozlamalari
-
-Printer sozlamalari **serverdan avtomatik sinxronizatsiya** qilinadi:
-
-| Sozlama | Tavsif | Qayerdan |
+| Maydon | Qiymat | Izoh |
 |---|---|---|
-| `qz_print` | QZ Tray yoqilgan/o'chirilgan (1/0) | Serverdan |
-| `qz_host` | QZ Tray host (default: localhost) | Serverdan |
-| `customer_qz_printer` | Mijoz cheki printeri nomi | Serverdan |
-| `production_units[].qz_printer_name` | Production unit printer nomi | Serverdan |
+| Chop etishni yoqish | ✓ | Printerni yoqish |
+| Kassa printer nomi | `XP-365B` | wmic/lpstat dan olingan nom |
 
-Printer nomlari QZ Tray da ko'rinadigan nomlar bilan bir xil bo'lishi kerak.
+**URY Production Unit (har bir unit uchun):**
+
+| Maydon | Qiymat | Izoh |
+|---|---|---|
+| Printer nomi | `XP-365B` | Shu unitga tegishli printer |
+| Item Groups | Oshpaz, Koffe va h.k. | Qaysi tovarlar shu printerga borishi |
+
+### 3. Bitta printer bilan test
+
+Agar bitta printeringiz bo'lsa — hamma joyga shu printer nomini yozing:
+- POS Profile → Kassa printer nomi: `XP-365B`
+- Oshpaz unit → Printer nomi: `XP-365B`
+- Bar unit → Printer nomi: `XP-365B`
+
+Natija: bitta printerdan ketma-ket 3 ta chek chiqadi (mijoz, oshxona, bar).
 
 ### Chek chiqarish mantiqi
 
@@ -225,10 +204,10 @@ Buyurtma → **1 ta mijoz cheki** + **N ta production unit cheki**:
 
 | Chek turi | Mazmuni | Printer |
 |---|---|---|
-| Mijoz cheki | Barcha tovarlar + narxlar + to'lov + qaytim + stiker | `customer_qz_printer` |
-| Production unit cheki | Faqat shu unitga tegishli tovarlar (narxsiz) + stiker + buyurtma turi | `production_units[].qz_printer_name` |
+| Mijoz cheki | Barcha tovarlar + narxlar + to'lov + qaytim + stiker | Kassa printer |
+| Production unit cheki | Faqat shu unitga tegishli tovarlar (narxsiz, katta shrift) + stiker + buyurtma turi | Unit printer |
 
-Misol: 1 Latte + 1 Hotdog buyurtma qilindi (Stiker: 42):
+Misol: 1 Latte + 1 Hotdog buyurtma (Stiker: 42):
 - **Mijoz cheki** → Latte 25,000 + Hotdog 15,000 = 40,000 UZS
 - **Barista cheki** → Latte x1, Stiker: 42
 - **Oshxona cheki** → Hotdog x1, Stiker: 42
@@ -236,10 +215,8 @@ Misol: 1 Latte + 1 Hotdog buyurtma qilindi (Stiker: 42):
 ## Oflayn rejim
 
 - Server bilan aloqa yo'q bo'lganda buyurtmalar lokal SQLite bazaga saqlanadi
-- Cheklar darhol chop etiladi (lokal ma'lumotlar asosida)
 - Status bar da **OFFLINE** ko'rsatiladi, offline cheklar soni tugmada ko'rinadi
-- Internet tiklanishi bilan cheklar avtomatik serverga yuboriladi (har 30 sekundda tekshiriladi)
-- Agar `sync_order` muvaffaqiyatli, lekin `make_invoice` xato bo'lsa — qayta urinishda faqat `make_invoice` chaqiriladi (duplikat buyurtma oldini olish)
+- Internet tiklanishi bilan cheklar avtomatik serverga yuboriladi (har 30 sekundda)
 - Doimiy xatolar (ValidationError, 403, 404) qayta urinilmaydi — "Failed" statusiga o'tkaziladi
 
 ## Buyurtma turlari
@@ -264,8 +241,6 @@ FRAPPE_PASSWORD=your-password
 FRAPPE_SITE=your-site.localhost
 ```
 
-`FRAPPE_SITE` — faqat multi-site bench uchun kerak.
-
 ### `config.json` — Ish vaqtida sozlamalar
 
 Sinxronizatsiya vaqtida serverdan avtomatik to'ldiriladi. Qo'lda o'zgartirish shart emas.
@@ -284,10 +259,11 @@ python main.py
 
 ### Printer ishlamayapti
 
-1. QZ Tray ishga tushganligini tekshiring (system tray)
-2. `config.json` da `qz_print: 1` ekanligini tekshiring
-3. Printer nomi QZ Tray dagi nom bilan bir xilligini tekshiring
-4. QZ Tray konsolida xatolarni tekshiring
+1. `config.json` da `qz_print: 1` ekanligini tekshiring
+2. Printer nomi OS dagi nom bilan bir xilligini tekshiring
+3. Windows: `wmic printer get name` — printer ro'yxatda bormi?
+4. Linux: `lpstat -p` — printer ro'yxatda bormi?
+5. Printer yoqilganligini va USB ulangan bo'lishini tekshiring
 
 ### Server bilan aloqa yo'q
 
