@@ -26,3 +26,11 @@ TICKET_ORDER_TYPES = ["Shu yerda", "Saboy"]
 
 # All order types
 ORDER_TYPES = ["Shu yerda", "Saboy", "Dastavka", "Dastavka Saboy"]
+
+# UI order type → Frappe server order type mapping
+ORDER_TYPE_MAP = {
+    "Shu yerda": "Dine In",
+    "Saboy": "Take Away",
+    "Dastavka": "Delivery",
+    "Dastavka Saboy": "Delivery",
+}

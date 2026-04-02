@@ -1,5 +1,6 @@
 """Kassa yopish dialogi — POS Closing Entry yaratish."""
 import json
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QScrollArea, QWidget,
@@ -38,7 +39,7 @@ class ClosingDataWorker(QThread):
 
 class ClosingWorker(QThread):
     """Kassani yopish — POS Closing Entry yaratish."""
-    result_ready = pyqtSignal(bool, str)
+    result_ready = pyqtSignal(bool, str, object)  # success, message, z_report_data
 
     def __init__(self, api: FrappeAPI, opening_entry: str, payment_reconciliation: list):
         super().__init__()
@@ -57,9 +58,10 @@ class ClosingWorker(QThread):
             )
             if success and isinstance(response, dict):
                 self._close_local_shift()
-                self.result_ready.emit(True, f"Kassa yopildi: {response.get('name', '')}")
+                z_data = response.get("z_report_data", {})
+                self.result_ready.emit(True, f"Kassa yopildi: {response.get('name', '')}", z_data)
             else:
-                self.result_ready.emit(False, f"Kassa yopishda xatolik: {response}")
+                self.result_ready.emit(False, f"Kassa yopishda xatolik: {response}", {})
         finally:
             if not db.is_closed():
                 db.close()
@@ -83,8 +85,11 @@ class PosClosingDialog(QDialog):
         self.api = api
         self.opening_entry = opening_entry
         self.reconciliation_data = []
-        self.closing_inputs = {}
-        self.active_input = None
+        self._cash_key = None
+        self._verification_state = "first"
+        self._first_cash_amount = None
+        self.total_invoices = 0
+        self._z_report_data_from_backend = {}  # Backend javobidagi Z-report ma'lumotlari
         self.init_ui()
         QTimer.singleShot(50, self._center_on_parent)
         self._load_closing_data()
@@ -96,49 +101,36 @@ class PosClosingDialog(QDialog):
             c_geo.moveCenter(p_geo.center())
             self.move(c_geo.topLeft())
 
-    @staticmethod
-    def _active_input_style():
-        return (
-            f"padding: {s(8)}px {s(12)}px; font-size: {font(16)}px; font-weight: 700; "
-            f"border: 2px solid #3b82f6; border-radius: {s(10)}px; background: #eff6ff; color: #1e293b;"
-        )
-
-    @staticmethod
-    def _normal_input_style():
-        return (
-            f"padding: {s(8)}px {s(12)}px; font-size: {font(16)}px; font-weight: 700; "
-            f"border: 1.5px solid #e2e8f0; border-radius: {s(10)}px; background: white; color: #1e293b;"
-        )
-
     def init_ui(self):
         self.setWindowTitle("Kassa yopish")
-        self.setFixedSize(s(820), s(600))
+        self.setMinimumSize(s(900), s(700))
+        self.resize(s(1024), s(768))
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
 
         main_h = QHBoxLayout(self)
-        main_h.setContentsMargins(s(20), s(20), s(20), s(20))
-        main_h.setSpacing(s(20))
+        main_h.setContentsMargins(s(30), s(30), s(30), s(30))
+        main_h.setSpacing(s(30))
 
         # ── LEFT PANEL ───────────────────────────
         left = QWidget()
         self.left_layout = QVBoxLayout(left)
         self.left_layout.setContentsMargins(0, 0, 0, 0)
-        self.left_layout.setSpacing(s(12))
+        self.left_layout.setSpacing(s(16))
 
         # Header
         header = QFrame()
-        header.setStyleSheet(f"background: #7c2d12; border-radius: {s(10)}px; padding: {s(15)}px;")
+        header.setStyleSheet(f"background: #7c2d12; border-radius: {s(12)}px; padding: {s(24)}px;")
         h_layout = QVBoxLayout(header)
 
         title = QLabel("KASSA YOPISH")
-        title.setStyleSheet(f"color: #fed7aa; font-size: {font(11)}px; font-weight: 700; letter-spacing: 2px;")
+        title.setStyleSheet(f"color: #fed7aa; font-size: {font(13)}px; font-weight: 700; letter-spacing: 2px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(title)
 
         self.info_label = QLabel("Ma'lumotlar yuklanmoqda...")
-        self.info_label.setStyleSheet(f"color: white; font-size: {font(14)}px; font-weight: 600;")
+        self.info_label.setStyleSheet(f"color: white; font-size: {font(16)}px; font-weight: 600;")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         h_layout.addWidget(self.info_label)
 
@@ -150,40 +142,62 @@ class PosClosingDialog(QDialog):
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.left_layout.addWidget(self.loading_label)
 
-        # Scroll area (hidden until data loads)
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setStyleSheet("border: none; background: transparent;")
-        self.scroll.setVisible(False)
-        self.left_layout.addWidget(self.scroll)
+        # ── NAQD PUL KIRISH QISMI (ma'lumot yuklanganidan keyin ko'rinadi) ──
+        self.cash_section = QWidget()
+        self.cash_section.setVisible(False)
+        cash_layout = QVBoxLayout(self.cash_section)
+        cash_layout.setContentsMargins(0, 0, 0, 0)
+        cash_layout.setSpacing(s(12))
 
-        # Difference label
-        self.diff_label = QLabel()
-        self.diff_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.diff_label.setVisible(False)
-        self.left_layout.addWidget(self.diff_label)
+        self.step_label = QLabel("NAQD PULNI SANING VA KIRITING")
+        self.step_label.setStyleSheet(
+            f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+        )
+        cash_layout.addWidget(self.step_label)
+
+        self.cash_input = ClickableLineEdit()
+        self.cash_input.setValidator(QDoubleValidator(0.0, 999_999_999.0, 2))
+        self.cash_input.setPlaceholderText("0")
+        self.cash_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.cash_input.setFixedHeight(s(80))
+        self.cash_input.setStyleSheet(
+            f"padding: {s(12)}px {s(20)}px; font-size: {font(32)}px; font-weight: 800; "
+            f"border: 2.5px solid #3b82f6; border-radius: {s(14)}px; "
+            f"background: #eff6ff; color: #1e293b;"
+        )
+        cash_layout.addWidget(self.cash_input)
+
+        self.left_layout.addWidget(self.cash_section)
+        self.left_layout.addStretch()
+
+        # Status label (faqat xatolik/tasdiqlash holati uchun, farq Ko'rsatilmaydi)
+        self.status_label = QLabel()
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.setVisible(False)
+        self.left_layout.addWidget(self.status_label)
 
         # Buttons
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(s(10))
+        btn_layout.setSpacing(s(16))
 
         btn_cancel = QPushButton("Bekor")
-        btn_cancel.setFixedHeight(s(52))
+        btn_cancel.setFixedHeight(s(64))
         btn_cancel.setStyleSheet(f"""
             QPushButton {{ background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: {font(14)}px; border-radius: {s(12)}px; border: none; }}
+                font-weight: 700; font-size: {font(16)}px; border-radius: {s(14)}px; border: none; }}
             QPushButton:hover {{ background: #e2e8f0; }}
         """)
         btn_cancel.clicked.connect(self.reject)
 
         self.btn_close = QPushButton("KASSANI YOPISH")
-        self.btn_close.setFixedHeight(s(52))
+        self.btn_close.setFixedHeight(s(64))
         self.btn_close.setEnabled(False)
         self.btn_close.setStyleSheet(f"""
             QPushButton {{ background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
                     stop:0 #dc2626, stop:1 #b91c1c);
-                color: white; font-weight: 800; font-size: {font(15)}px;
-                border-radius: {s(12)}px; border: none; }}
+                color: white; font-weight: 800; font-size: {font(17)}px;
+                border-radius: {s(14)}px; border: none; }}
             QPushButton:hover {{ background: #991b1b; }}
             QPushButton:disabled {{ background: #fca5a5; color: #fecaca; }}
         """)
@@ -199,14 +213,14 @@ class PosClosingDialog(QDialog):
         right = QWidget()
         right.setStyleSheet(f"background: #f8fafc; border-radius: {s(14)}px;")
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(s(12), s(12), s(12), s(12))
-        right_layout.setSpacing(s(10))
+        right_layout.setContentsMargins(s(16), s(16), s(16), s(16))
+        right_layout.setSpacing(s(16))
 
-        numpad_lbl = QLabel("YOPISH SUMMASI")
-        numpad_lbl.setStyleSheet(
-            f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;"
+        self.numpad_lbl = QLabel("NAQD PUL SUMMASI")
+        self.numpad_lbl.setStyleSheet(
+            f"font-size: {font(12)}px; font-weight: 800; color: #64748b; letter-spacing: 2px;"
         )
-        right_layout.addWidget(numpad_lbl)
+        right_layout.addWidget(self.numpad_lbl)
 
         self.numpad = TouchNumpad()
         self.numpad.digit_clicked.connect(self._on_numpad_clicked)
@@ -230,116 +244,45 @@ class PosClosingDialog(QDialog):
             return
 
         self.loading_label.setVisible(False)
-        self.scroll.setVisible(True)
-        self.diff_label.setVisible(True)
+        self.cash_section.setVisible(True)
         self.btn_close.setEnabled(True)
 
-        total_invoices = data.get("total_invoices", 0)
+        self.total_invoices = data.get("total_invoices", 0)
         self.reconciliation_data = data.get("reconciliation", [])
+        self.info_label.setText(f"Jami cheklar: {self.total_invoices}")
 
-        self.info_label.setText(f"Jami cheklar: {total_invoices}")
-
-        # Build reconciliation form
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(s(8))
-
-        col_header = QHBoxLayout()
-        for text, width in [("To'lov turi", s(120)), ("Kutilgan", s(100)), ("Haqiqiy", s(130))]:
-            lbl = QLabel(text)
-            lbl.setFixedWidth(width)
-            lbl.setStyleSheet(f"font-size: {font(10)}px; font-weight: 700; color: #94a3b8; letter-spacing: 1px;")
-            col_header.addWidget(lbl)
-        col_header.addStretch()
-        scroll_layout.addLayout(col_header)
-
+        # Naqd kalitini aniqlash (faqat ichki — ekranda ko'rsatilmaydi)
+        _CASH_KEYWORDS = {"cash", "naqd", "naqd pul", "наличные", "cash in hand"}
         for idx, rec in enumerate(self.reconciliation_data):
             mop = rec["mode_of_payment"]
-            expected = rec["expected_amount"]
+            if mop.lower().strip() in _CASH_KEYWORDS and self._cash_key is None:
+                self._cash_key = mop
+            if idx == 0 and self._cash_key is None:
+                self._cash_key = mop
 
-            row = QHBoxLayout()
+        self.cash_input.setText("")
+        self.cash_input.setFocus()
 
-            lbl = QLabel(mop)
-            lbl.setFixedWidth(s(120))
-            lbl.setStyleSheet(f"font-size: {font(13)}px; font-weight: 600; color: #334155;")
-            row.addWidget(lbl)
-
-            exp_lbl = QLabel(f"{expected:,.0f}".replace(",", " "))
-            exp_lbl.setFixedWidth(s(100))
-            exp_lbl.setStyleSheet(f"font-size: {font(14)}px; font-weight: 700; color: #1e40af;")
-            row.addWidget(exp_lbl)
-
-            inp = ClickableLineEdit()
-            inp.setValidator(QDoubleValidator(0.0, 999999999.0, 2))
-            inp.setPlaceholderText("0")
-            inp.setText(str(int(expected)))
-            inp.setFixedWidth(s(130))
-            inp.setFixedHeight(s(44))
-            inp.setAlignment(Qt.AlignmentFlag.AlignRight)
-            inp.clicked.connect(self._set_active_input)
-            inp.textChanged.connect(self._update_difference)
-
-            if idx == 0:
-                self.active_input = inp
-                inp.setStyleSheet(self._active_input_style())
-            else:
-                inp.setStyleSheet(self._normal_input_style())
-
-            row.addWidget(inp)
-            row.addStretch()
-
-            self.closing_inputs[mop] = {"input": inp, "expected": expected}
-            scroll_layout.addLayout(row)
-
-        scroll_layout.addStretch()
-        self.scroll.setWidget(scroll_content)
-        self._update_difference()
-
-    def _set_active_input(self, inp):
-        if self.active_input:
-            self.active_input.setStyleSheet(self._normal_input_style())
-        self.active_input = inp
-        inp.setStyleSheet(self._active_input_style())
-        inp.setFocus()
 
     def _on_numpad_clicked(self, action: str):
-        if not self.active_input:
-            return
-        current = self.active_input.text()
+        target = self.cash_input
+        current = target.text()
         if action == "CLEAR":
-            self.active_input.setText("0")
+            target.setText("")
         elif action == "BACKSPACE":
-            new_val = current[:-1] if len(current) > 1 else "0"
-            self.active_input.setText(new_val)
+            target.setText(current[:-1])
         elif action == ".":
             if "." not in current:
-                self.active_input.setText(current + ".")
+                target.setText(current + ".")
         else:
-            if current == "0":
-                self.active_input.setText(action)
-            else:
-                self.active_input.setText(current + action)
+            target.setText(current + action)
 
-    def _update_difference(self):
-        total_diff = 0
-        for mop, data in self.closing_inputs.items():
-            try:
-                closing_amt = float(data["input"].text() or 0)
-            except ValueError:
-                closing_amt = 0
-            diff = data["expected"] - closing_amt
-            total_diff += abs(diff)
-
-        if total_diff == 0:
-            self.diff_label.setText("Farq yo'q — hammasi to'g'ri")
-            self.diff_label.setStyleSheet(
-                f"font-size: {font(14)}px; font-weight: 700; color: #16a34a; padding: {s(6)}px;"
-            )
-        else:
-            self.diff_label.setText(f"Farq: {total_diff:,.0f} UZS".replace(",", " "))
-            self.diff_label.setStyleSheet(
-                f"font-size: {font(14)}px; font-weight: 700; color: #dc2626; padding: {s(6)}px;"
-            )
+    def _show_status(self, text: str, color: str):
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(
+            f"font-size: {font(13)}px; font-weight: 700; color: {color}; padding: {s(6)}px;"
+        )
+        self.status_label.setVisible(True)
 
     def reject(self):
         if hasattr(self, 'closing_worker') and self.closing_worker.isRunning():
@@ -347,37 +290,172 @@ class PosClosingDialog(QDialog):
         super().reject()
 
     def _process_closing(self):
+        """Double verification: birinchi marta → tasdiqlash so'rashi, ikkinchi marta → solishtirish."""
+        try:
+            cash_amount = float(self.cash_input.text() or "0")
+        except ValueError:
+            cash_amount = 0.0
+
+        if self._verification_state == "first":
+            if not self.cash_input.text().strip():
+                self._show_status("Naqd pul summasini kiriting!", "#dc2626")
+                return
+            self._first_cash_amount = cash_amount
+            self.cash_input.setText("")
+            self._verification_state = "second"
+            self.btn_close.setText("✓  TASDIQLASH")
+            self.step_label.setText("2-QADAM: QAYTA SANING VA KIRITING")
+            self.step_label.setStyleSheet(
+                f"font-size: {font(11)}px; font-weight: 800; color: #f59e0b; letter-spacing: 2px;"
+            )
+            self.numpad_lbl.setText("QAYTA SANING — TASDIQLASH")
+            self.numpad_lbl.setStyleSheet(
+                f"font-size: {font(12)}px; font-weight: 800; color: #f59e0b; letter-spacing: 2px;"
+            )
+            self.cash_input.setStyleSheet(
+                f"padding: {s(12)}px {s(20)}px; font-size: {font(32)}px; font-weight: 800; "
+                f"border: 2.5px solid #f59e0b; border-radius: {s(14)}px; "
+                f"background: #fffbeb; color: #1e293b;"
+            )
+            self._show_status("Naqd pulni qayta saning va summani kiriting.", "#f59e0b")
+
+        elif self._verification_state == "second":
+            if not self.cash_input.text().strip():
+                self._show_status("Summani kiriting!", "#dc2626")
+                return
+
+            if abs(cash_amount - self._first_cash_amount) < 0.01:
+                self._submit_closing()
+            else:
+                self._verification_state = "first"
+                self._first_cash_amount = None
+                self.cash_input.setText("")
+                self.btn_close.setText("KASSANI YOPISH")
+                self.step_label.setText("NAQD PULNI SANING VA KIRITING")
+                self.step_label.setStyleSheet(
+                    f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+                )
+                self.numpad_lbl.setText("NAQD PUL SUMMASI")
+                self.numpad_lbl.setStyleSheet(
+                    f"font-size: {font(12)}px; font-weight: 800; color: #64748b; letter-spacing: 2px;"
+                )
+                self.cash_input.setStyleSheet(
+                    f"padding: {s(12)}px {s(20)}px; font-size: {font(32)}px; font-weight: 800; "
+                    f"border: 2.5px solid #3b82f6; border-radius: {s(14)}px; "
+                    f"background: #eff6ff; color: #1e293b;"
+                )
+                self._show_status("❌  Summa mos kelmadi. Qaytadan saning.", "#dc2626")
+
+    def _submit_closing(self):
         self.btn_close.setEnabled(False)
         self.btn_close.setText("Kassa yopilmoqda...")
+        self.status_label.setVisible(False)
+
+        try:
+            actual_cash = float(self.cash_input.text() or 0)
+        except ValueError:
+            actual_cash = 0.0
 
         payment_reconciliation = []
         for rec in self.reconciliation_data:
             mop = rec["mode_of_payment"]
-            data = self.closing_inputs.get(mop, {})
-            try:
-                closing_amount = float(data["input"].text() or 0)
-            except (ValueError, KeyError):
-                closing_amount = 0
-
+            is_cash = (mop == self._cash_key)
             payment_reconciliation.append({
                 "mode_of_payment": mop,
                 "opening_amount": rec["opening_amount"],
                 "expected_amount": rec["expected_amount"],
-                "closing_amount": closing_amount,
+                # Naqd: kassir kiritgan; boshqalar: avtomatik expected_amount
+                "closing_amount": actual_cash if is_cash else float(rec["expected_amount"]),
             })
 
         self.closing_worker = ClosingWorker(self.api, self.opening_entry, payment_reconciliation)
         self.closing_worker.result_ready.connect(self._on_closing_finished)
         self.closing_worker.start()
 
-    def _on_closing_finished(self, success: bool, message: str):
+    def _on_closing_finished(self, success: bool, message: str, z_report_data: object):
         self.btn_close.setEnabled(True)
         self.btn_close.setText("KASSANI YOPISH")
 
         if success:
-            self.accept()
+            self._print_z_report(z_report_data if isinstance(z_report_data, dict) else {})
             self.closing_completed.emit()
+            self.accept()
         else:
             logger.error("Kassa yopish xatosi: %s", message)
-            self.btn_close.setText("Qayta urinish")
-            self.btn_close.setEnabled(True)
+            self._verification_state = "first"
+            self._first_cash_amount = None
+            self.cash_input.setText("")
+            self.btn_close.setText("KASSANI YOPISH")
+            self.step_label.setText("NAQD PULNI SANING VA KIRITING")
+            self.step_label.setStyleSheet(
+                f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+            )
+            self.cash_input.setStyleSheet(
+                f"padding: {s(12)}px {s(20)}px; font-size: {font(32)}px; font-weight: 800; "
+                f"border: 2.5px solid #3b82f6; border-radius: {s(14)}px; "
+                f"background: #eff6ff; color: #1e293b;"
+            )
+            self._show_status(f"❌  Xatolik: {message}", "#dc2626")
+
+    def _print_z_report(self, z_report_data: dict):
+        """Z-otchyotni printerga yuborish. Backend javobidagi ma'lumotlardan foydalanadi."""
+        try:
+            from core.printer import print_z_report
+            from core.config import load_config
+
+            cfg = load_config()
+
+            # Backend z_report_data dan olingan ma'lumotlar
+            if z_report_data:
+                expected_cash = float(z_report_data.get("expected_cash", 0))
+                actual_cash = float(z_report_data.get("actual_cash", 0))
+                cash_diff = float(z_report_data.get("cash_diff", 0))
+                total_sales = float(z_report_data.get("total_sales", 0))
+                total_invoices = z_report_data.get("total_invoices", self.total_invoices)
+                payments = z_report_data.get("payments", [])
+            else:
+                # Fallback: lokal hisoblash (backend z_report_data qaytarmagan holda)
+                try:
+                    actual_cash = float(self.cash_input.text() or 0)
+                except ValueError:
+                    actual_cash = 0.0
+
+                expected_cash = 0.0
+                total_sales = 0.0
+                payments = []
+                for rec in self.reconciliation_data:
+                    mop = rec["mode_of_payment"]
+                    exp = float(rec.get("expected_amount", 0))
+                    total_sales += exp
+                    is_cash = (mop == self._cash_key)
+                    if is_cash:
+                        expected_cash = exp
+                    payments.append({
+                        "mode_of_payment": mop,
+                        "expected_amount": exp,
+                        "closing_amount": actual_cash if is_cash else exp,
+                    })
+
+                cash_diff = actual_cash - expected_cash
+                total_invoices = self.total_invoices
+
+            report_data = {
+                "terminal_name": cfg.get("company", "JAZIRA POS"),
+                "pos_profile": cfg.get("pos_profile", ""),
+                "shift_id": self.opening_entry or "—",
+                "cashier": cfg.get("cashier", cfg.get("user", "—")),
+                "opened_at": "—",
+                "closed_at": datetime.now().strftime("%Y-%m-%d  %H:%M"),
+                "payments": payments,
+                "total_invoices": total_invoices,
+                "total_sales": total_sales,
+                "expected_cash": expected_cash,
+                "actual_cash": actual_cash,
+                "cash_diff": cash_diff,
+            }
+
+            ok = print_z_report(report_data)
+            if not ok:
+                logger.info("Z-report chop etilmadi (printer sozlanmagan yoki o'chirilgan)")
+        except Exception as e:
+            logger.error("Z-report print xatosi: %s", e)

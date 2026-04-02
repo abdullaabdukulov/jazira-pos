@@ -2,8 +2,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPushButton, QLabel, QHBoxLayout,
     QComboBox, QLineEdit, QGroupBox, QFrame,
+    QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QColor
 from database.models import Customer, db
 from core.logger import get_logger
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
@@ -137,62 +139,106 @@ class CartWidget(QWidget):
 
         # ── Cart Table ───────────────────────
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Nomi", "Miqdor", "Narx", "Summa"])
+        self.table.setHorizontalHeaderLabels(["Mahsulot", "Miqdor", "Narx", "Summa"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet(f"""
             QTableWidget {{
                 border: none;
                 background: white;
-                font-size: {font(13)}px;
+                alternate-background-color: #f8fafc;
+                font-size: {font(14)}px;
+                color: #1e293b;
+                selection-background-color: #dbeafe;
+                selection-color: #1e40af;
             }}
-            QTableWidget::item {{ padding: {s(4)}px {s(6)}px; }}
-            QTableWidget::item:selected {{ background: #dbeafe; color: #1e40af; }}
+            QTableWidget::item {{
+                padding: {s(6)}px {s(10)}px;
+                border-bottom: 1px solid #f1f5f9;
+            }}
             QHeaderView::section {{
-                background: #f8fafc;
-                color: #94a3b8;
-                font-weight: 700;
+                background: #f1f5f9;
+                color: #64748b;
+                font-weight: 800;
                 font-size: {font(11)}px;
-                letter-spacing: 0.5px;
-                padding: {s(8)}px {s(6)}px;
+                letter-spacing: 1.5px;
+                text-transform: uppercase;
+                padding: {s(10)}px {s(10)}px;
                 border: none;
-                border-bottom: 1px solid #e2e8f0;
+                border-bottom: 2px solid #e2e8f0;
             }}
+            QScrollBar:vertical {{
+                width: {s(6)}px; background: transparent;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #cbd5e1; border-radius: {s(3)}px; min-height: {s(30)}px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
         """)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(1, s(160))
+        self.table.setColumnWidth(2, s(100))
+        self.table.setColumnWidth(3, s(110))
         main_layout.addWidget(self.table)
 
-        # ── Totals ───────────────────────────
-        totals_layout = QHBoxLayout()
-        totals_layout.setContentsMargins(s(4), s(4), s(4), s(4))
+        # Touch scroll — sensorli ekranda barmaq bilan surish
+        scroller = QScroller.scroller(self.table.viewport())
+        scroller.grabGesture(self.table.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+        props = scroller.scrollerProperties()
+        props.setScrollMetric(QScrollerProperties.ScrollMetric.DragStartDistance, 0.004)
+        props.setScrollMetric(QScrollerProperties.ScrollMetric.DecelerationFactor, 0.85)
+        scroller.setScrollerProperties(props)
 
-        total_title = QLabel("Jami:")
-        total_title.setStyleSheet(f"font-size: {font(13)}px; color: #64748b; font-weight: 600;")
+        # ── Totals Card ───────────────────────
+        totals_card = QFrame()
+        totals_card.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #f8fafc, stop:1 #f1f5f9);
+                border: 1.5px solid #e2e8f0;
+                border-radius: {s(12)}px;
+            }}
+        """)
+        totals_layout = QHBoxLayout(totals_card)
+        totals_layout.setContentsMargins(s(14), s(10), s(14), s(10))
+
+        total_title = QLabel("JAMI")
+        total_title.setStyleSheet(f"""
+            font-size: {font(11)}px; color: #94a3b8; font-weight: 800;
+            letter-spacing: 2px; background: transparent;
+        """)
         self.total_label = QLabel("0 UZS")
-        self.total_label.setStyleSheet(f"font-size: {font(26)}px; font-weight: 800; color: #111827;")
-        totals_layout.addWidget(total_title)
-        totals_layout.addWidget(self.total_label)
-        totals_layout.addStretch()
+        self.total_label.setStyleSheet(f"""
+            font-size: {font(28)}px; font-weight: 900; color: #0f172a;
+            background: transparent;
+        """)
+        self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        self.clear_btn = QPushButton("Tozalash")
-        self.clear_btn.setFixedSize(s(110), s(48))
+        totals_layout.addWidget(total_title)
+        totals_layout.addStretch()
+        totals_layout.addWidget(self.total_label)
+
+        self.clear_btn = QPushButton("🗑  Tozalash")
+        self.clear_btn.setFixedSize(s(130), s(44))
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #fee2e2; color: #b91c1c;
-                font-weight: 600; font-size: {font(13)}px;
-                border-radius: {s(8)}px; border: none;
+                background: #fef2f2; color: #dc2626;
+                font-weight: 700; font-size: {font(12)}px;
+                border-radius: {s(10)}px; border: 1.5px solid #fecaca;
             }}
-            QPushButton:hover {{ background: #fecaca; }}
-            QPushButton:pressed {{ background: #fca5a5; }}
+            QPushButton:hover {{ background: #fee2e2; border-color: #fca5a5; }}
+            QPushButton:pressed {{ background: #fecaca; }}
         """)
         self.clear_btn.clicked.connect(self.clear_cart)
         totals_layout.addWidget(self.clear_btn)
-        main_layout.addLayout(totals_layout)
+        main_layout.addWidget(totals_card)
 
         # ── Checkout Button ──────────────────
         self.checkout_btn = QPushButton("TO'LOV QILISH  (F12)")
@@ -533,17 +579,20 @@ class CartWidget(QWidget):
         total_amount = 0.0
         currency = "UZS"
 
-        _btn_sz = s(44)
-        _qty_w = s(48)
-        _qty_h = s(44)
-        _r = s(10)
+        _btn_sz = s(40)
+        _qty_w = s(44)
+        _qty_h = s(40)
+        _r = s(8)
 
         for row_idx, (code, data) in enumerate(self.items.items()):
             self.table.insertRow(row_idx)
-            self.table.setRowHeight(row_idx, s(65))
+            self.table.setRowHeight(row_idx, s(60))
 
             name_item = QTableWidgetItem(data["name"])
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+            f = name_item.font()
+            f.setWeight(600)
+            name_item.setFont(f)
             self.table.setItem(row_idx, 0, name_item)
 
             qty_widget = QWidget()
@@ -557,9 +606,9 @@ class CartWidget(QWidget):
             btn_minus.setFixedSize(_btn_sz, _btn_sz)
             btn_minus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(20)}px; font-weight: bold; color: #dc2626;
+                    font-size: {font(18)}px; font-weight: bold; color: #ef4444;
                     background: #fef2f2;
-                    border: none;
+                    border: 1px solid #fecaca;
                     border-top-left-radius: {_r}px;
                     border-bottom-left-radius: {_r}px;
                     border-top-right-radius: 0px;
@@ -573,8 +622,8 @@ class CartWidget(QWidget):
             qty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_label.setFixedSize(_qty_w, _qty_h)
             qty_label.setStyleSheet(f"""
-                font-size: {font(17)}px; font-weight: 800; color: #1e293b;
-                background: #f8fafc; border: none;
+                font-size: {font(16)}px; font-weight: 900; color: #0f172a;
+                background: white;
                 border-top: 1px solid #e2e8f0;
                 border-bottom: 1px solid #e2e8f0;
             """)
@@ -584,9 +633,9 @@ class CartWidget(QWidget):
             btn_plus.setFixedSize(_btn_sz, _btn_sz)
             btn_plus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(20)}px; font-weight: bold; color: #16a34a;
+                    font-size: {font(18)}px; font-weight: bold; color: #22c55e;
                     background: #f0fdf4;
-                    border: none;
+                    border: 1px solid #bbf7d0;
                     border-top-right-radius: {_r}px;
                     border-bottom-right-radius: {_r}px;
                     border-top-left-radius: 0px;
@@ -603,6 +652,7 @@ class CartWidget(QWidget):
 
             price_item = QTableWidgetItem(f"{data['price']:,.0f}".replace(",", " "))
             price_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            price_item.setForeground(QColor("#64748b"))
             self.table.setItem(row_idx, 2, price_item)
 
             amount = int(data["qty"]) * data["price"]
@@ -611,6 +661,10 @@ class CartWidget(QWidget):
 
             amount_item = QTableWidgetItem(f"{amount:,.0f}".replace(",", " "))
             amount_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            f2 = amount_item.font()
+            f2.setWeight(700)
+            amount_item.setFont(f2)
+            amount_item.setForeground(QColor("#0f172a"))
             self.table.setItem(row_idx, 3, amount_item)
 
         self.total_label.setText(f"{total_amount:,.0f} {currency}".replace(",", " "))

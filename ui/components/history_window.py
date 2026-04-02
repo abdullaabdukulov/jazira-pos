@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QFrame, QLineEdit,
+    QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
@@ -13,33 +14,58 @@ from ui.scale import s, font
 logger = get_logger(__name__)
 
 
+def _touch_scroll(table):
+    scroller = QScroller.scroller(table.viewport())
+    scroller.grabGesture(table.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+    props = scroller.scrollerProperties()
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DragStartDistance, 0.004)
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DecelerationFactor, 0.85)
+    scroller.setScrollerProperties(props)
+
+
 # ─────────────────────────────────────
 #  Worker threads
 # ─────────────────────────────────────
 class FetchHistoryWorker(QThread):
     result_ready = pyqtSignal(bool, list)
 
-    def __init__(self, api: FrappeAPI, opening_entry: str = ""):
+    def __init__(self, api: FrappeAPI, opening_entry: str = "", pos_profile: str = "", cashier: str = ""):
         super().__init__()
         self.api = api
         self.opening_entry = opening_entry
+        self.pos_profile = pos_profile
+        self.cashier = cashier
 
     def run(self):
-        if not self.opening_entry:
-            self.result_ready.emit(True, [])
-            return
+        fields = json.dumps(["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus", "creation"])
 
-        fields = json.dumps(["name", "customer", "grand_total", "posting_date", "posting_time", "status", "docstatus"])
-        filters = json.dumps([["POS Invoice", "pos_opening_entry", "=", self.opening_entry]])
+        # Avval pos_opening_entry bo'yicha qidir
+        if self.opening_entry:
+            filters = json.dumps([["POS Invoice", "pos_opening_entry", "=", self.opening_entry]])
+            data = self.api.fetch_data("POS Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT)
+            if data:
+                data.sort(key=lambda x: x.get("creation", ""), reverse=True)
+                self.result_ready.emit(True, data)
+                return
 
-        data = self.api.fetch_data(
-            "POS Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT,
-        )
-        if data is not None:
-            data.sort(key=lambda x: x.get("creation", ""), reverse=True)
-            self.result_ready.emit(True, data)
-        else:
-            self.result_ready.emit(False, [])
+        # pos_opening_entry bo'sh yoki natija yo'q — pos_profile + cashier + bugungi sana bo'yicha qidir
+        if self.pos_profile:
+            from datetime import date
+            today = date.today().isoformat()
+            filters_list = [
+                ["POS Invoice", "pos_profile", "=", self.pos_profile],
+                ["POS Invoice", "posting_date", "=", today],
+            ]
+            if self.cashier:
+                filters_list.append(["POS Invoice", "cashier", "=", self.cashier])
+            filters = json.dumps(filters_list)
+            data = self.api.fetch_data("POS Invoice", fields=fields, filters=filters, limit=HISTORY_FETCH_LIMIT)
+            if data is not None:
+                data.sort(key=lambda x: x.get("creation", ""), reverse=True)
+                self.result_ready.emit(True, data)
+                return
+
+        self.result_ready.emit(True, [])
 
 
 class FetchDetailsWorker(QThread):
@@ -75,6 +101,156 @@ class CancelOrderWorker(QThread):
             self.result_ready.emit(True, "Chek muvaffaqiyatli bekor qilindi!")
         else:
             self.result_ready.emit(False, f"Xatolik: {response}")
+
+
+class PrintTypeDialog(QDialog):
+    """Chop etish turini tanlash: Mijoz / Oshxona / Hammasi."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Chop etish turi")
+        self.setFixedSize(s(480), s(280))
+        self.setStyleSheet("background: white;")
+        self.print_type = None
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(s(24), s(20), s(24), s(24))
+        layout.setSpacing(s(12))
+
+        title = QLabel("Qayerga chop etasiz?")
+        title.setStyleSheet(f"font-size: {font(17)}px; font-weight: 800; color: #1e293b;")
+        layout.addWidget(title)
+
+        hint = QLabel("Printer sozlangan bo'lsa, tanlangan yo'nalishga yuboriladi.")
+        hint.setStyleSheet(f"font-size: {font(12)}px; color: #94a3b8;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(s(10))
+
+        for label, ptype, bg, hover, border in [
+            ("Mijoz cheki", "customer", "#eff6ff", "#dbeafe", "#93c5fd"),
+            ("Oshxona / Bar", "production", "#f0fdf4", "#dcfce7", "#86efac"),
+            ("Hammasi", "all", "#faf5ff", "#f3e8ff", "#c4b5fd"),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(s(60))
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: {bg}; color: #1e293b;
+                    font-weight: 700; font-size: {font(14)}px;
+                    border-radius: {s(10)}px; border: 2px solid {border};
+                }}
+                QPushButton:hover {{ background: {hover}; }}
+                QPushButton:pressed {{ background: {border}; }}
+            """)
+            btn.clicked.connect(lambda _, pt=ptype: self._select(pt))
+            btn_row.addWidget(btn)
+
+        layout.addLayout(btn_row)
+
+        cancel_btn = QPushButton("Bekor qilish")
+        cancel_btn.setFixedHeight(s(40))
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{ background: #f1f5f9; color: #64748b;
+                font-weight: 600; font-size: {font(12)}px;
+                border-radius: {s(8)}px; border: none; }}
+            QPushButton:hover {{ background: #e2e8f0; }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(cancel_btn)
+
+    def _select(self, print_type: str):
+        self.print_type = print_type
+        self.accept()
+
+
+class ReprintWorker(QThread):
+    """Invoice tafsilotlarini olib, chek qayta chop etish."""
+    result_ready = pyqtSignal(bool, str)
+
+    def __init__(self, api: FrappeAPI, invoice_id: str, print_type: str = "customer"):
+        super().__init__()
+        self.api = api
+        self.invoice_id = invoice_id
+        self.print_type = print_type  # "customer" | "production" | "all"
+
+    def run(self):
+        try:
+            success, doc = self.api.call_method(
+                "frappe.client.get", {"doctype": "POS Invoice", "name": self.invoice_id}
+            )
+            if not success or not isinstance(doc, dict):
+                self.result_ready.emit(False, "Chek ma'lumotlarini olishda xatolik")
+                return
+
+            # order_data va payments_list qayta qurish
+            order_data = {
+                "items": [
+                    {
+                        "item_code": it.get("item_code", ""),
+                        "item": it.get("item_code", ""),
+                        "name": it.get("item_name", ""),
+                        "item_name": it.get("item_name", ""),
+                        "qty": it.get("qty", 1),
+                        "rate": it.get("rate", 0),
+                        "price": it.get("rate", 0),
+                        "amount": it.get("amount", 0),
+                    }
+                    for it in doc.get("items", [])
+                ],
+                "total_amount": doc.get("grand_total", 0),
+                "customer": doc.get("customer", ""),
+            }
+            payments_list = [
+                {"mode_of_payment": p.get("mode_of_payment", ""), "amount": float(p.get("amount", 0))}
+                for p in doc.get("payments", [])
+                if float(p.get("amount", 0)) > 0
+            ]
+
+            from core import printer as _printer
+            pt = self.print_type
+
+            if pt == "customer":
+                ok = _printer.reprint_customer(order_data, payments_list)
+                if ok:
+                    self.result_ready.emit(True, "Mijoz cheki chop etildi!")
+                else:
+                    self.result_ready.emit(False, "Mijoz printeri xatosi yoki sozlanmagan.")
+
+            elif pt == "production":
+                results = _printer.reprint_production(order_data)
+                if not results:
+                    self.result_ready.emit(False, "Hech qanday production printer topilmadi yoki mahsulot yo'q.")
+                    return
+                failed = [u for u, ok in results.items() if not ok]
+                if not failed:
+                    units = ", ".join(results.keys())
+                    self.result_ready.emit(True, f"Oshxona/Bar chopi yuborildi: {units}")
+                else:
+                    self.result_ready.emit(False, f"Xato bo'lgan unitlar: {', '.join(failed)}")
+
+            else:  # "all"
+                results = _printer.reprint_all(order_data, payments_list)
+                cust_ok = results.pop("customer", None)
+                prod_failed = [u for u, ok in results.items() if not ok]
+                if cust_ok and not prod_failed:
+                    self.result_ready.emit(True, "Barcha printerga chopi yuborildi!")
+                elif cust_ok:
+                    self.result_ready.emit(True, f"Mijoz chopi OK. Xato unitlar: {', '.join(prod_failed)}")
+                elif not prod_failed and results:
+                    self.result_ready.emit(True, f"Oshxona/Bar OK. Mijoz printeri xato.")
+                else:
+                    self.result_ready.emit(False, "Printer xatosi yoki printerlar sozlanmagan.")
+
+        except Exception as e:
+            logger.error("Reprint xatosi: %s", e)
+            self.result_ready.emit(False, f"Xatolik: {e}")
 
 
 # ─────────────────────────────────────
@@ -131,6 +307,7 @@ class TransactionDetailDialog(QDialog):
             }}
         """)
         layout.addWidget(self.table)
+        _touch_scroll(self.table)
 
         # Payments
         pay_lbl = QLabel("TO'LOV TURLARI")
@@ -339,6 +516,8 @@ class HistoryWindow(QWidget):
         super().__init__(parent)
         self.api = api
         self.opening_entry = ""
+        self.pos_profile = ""
+        self.cashier = ""
         self._init_ui()
 
     def _init_ui(self):
@@ -391,8 +570,8 @@ class HistoryWindow(QWidget):
         layout.addWidget(sep)
 
         # ── Table ────────────────────────────
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Summa", "Amal"])
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Summa", "Bekor", "Chop etish"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -416,12 +595,15 @@ class HistoryWindow(QWidget):
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, s(130))
+        hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, s(110))
+        self.table.setColumnWidth(6, s(110))
         layout.addWidget(self.table)
+        _touch_scroll(self.table)
 
     def load_history(self):
         self.table.setRowCount(0)
-        self.worker = FetchHistoryWorker(self.api, self.opening_entry)
+        self.worker = FetchHistoryWorker(self.api, self.opening_entry, self.pos_profile, self.cashier)
         self.worker.result_ready.connect(self._on_loaded)
         self.worker.start()
 
@@ -444,23 +626,38 @@ class HistoryWindow(QWidget):
             self.table.setItem(i, 4, amt)
 
             if status != "Cancelled":
-                btn = QPushButton("Bekor qilish")
-                btn.setStyleSheet(f"""
+                cancel_btn = QPushButton("Bekor")
+                cancel_btn.setStyleSheet(f"""
                     QPushButton {{
                         background: #fff7ed; color: #ea580c;
                         font-weight: 600; font-size: {font(12)}px;
                         border-radius: {s(6)}px; border: 1px solid #fed7aa;
-                        padding: {s(4)}px {s(10)}px;
+                        padding: {s(4)}px {s(8)}px;
                     }}
                     QPushButton:hover {{ background: #ffedd5; }}
                 """)
-                btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
-                self.table.setCellWidget(i, 5, btn)
+                cancel_btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
+                self.table.setCellWidget(i, 5, cancel_btn)
             else:
                 lbl = QLabel("Bekor qilingan")
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
                 self.table.setCellWidget(i, 5, lbl)
+
+            # Qayta chop etish tugmasi (barcha cheklar uchun)
+            reprint_btn = QPushButton("🖨 Chop")
+            reprint_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #f0fdf4; color: #15803d;
+                    font-weight: 600; font-size: {font(12)}px;
+                    border-radius: {s(6)}px; border: 1px solid #bbf7d0;
+                    padding: {s(4)}px {s(8)}px;
+                }}
+                QPushButton:hover {{ background: #dcfce7; }}
+                QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }}
+            """)
+            reprint_btn.clicked.connect(lambda _, inv=inv_name, btn=reprint_btn: self._reprint(inv, btn))
+            self.table.setCellWidget(i, 6, reprint_btn)
 
     def _show_details(self, item):
         invoice_id = self.table.item(item.row(), 0).text()
@@ -477,3 +674,25 @@ class HistoryWindow(QWidget):
     def _on_cancel_finished(self, success: bool, message: str):
         QMessageBox.information(self, "Natija", message)
         self.load_history()
+
+    def _reprint(self, invoice_id: str, btn: QPushButton):
+        dlg = PrintTypeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        print_type = dlg.print_type or "customer"
+
+        btn.setEnabled(False)
+        btn.setText("Chop etilmoqda...")
+        self.reprint_worker = ReprintWorker(self.api, invoice_id, print_type)
+        self.reprint_worker.result_ready.connect(
+            lambda ok, msg, b=btn: self._on_reprint_finished(ok, msg, b)
+        )
+        self.reprint_worker.start()
+
+    def _on_reprint_finished(self, success: bool, message: str, btn: QPushButton):
+        try:
+            btn.setEnabled(True)
+            btn.setText("🖨 Chop")
+        except RuntimeError:
+            pass  # Widget allaqachon o'chirilgan
+        QMessageBox.information(self, "Chop etish natijasi", message)

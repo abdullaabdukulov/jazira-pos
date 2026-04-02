@@ -1,496 +1,393 @@
+"""Login oynasi — faqat 4 xonali PIN orqali kirish.
+Credentials (.env da) admin tomonidan sozlanadi.
+Dizayn: Markazlashtirilgan — logo, dots, numpad.
+"""
+
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QGraphicsDropShadowEffect, QScrollArea,
-    QSizePolicy,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QStackedWidget, QSizePolicy,
 )
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QThread
+from PyQt6.QtGui import QColor, QPainter, QLinearGradient, QBrush
+
 from core.api import FrappeAPI
-from core.config import save_credentials, load_config
+from core.config import load_config, save_pin, verify_pin, has_pin
 from core.logger import get_logger
-from ui.components.dialogs import ClickableLineEdit
 from ui.scale import s, font
 
 logger = get_logger(__name__)
 
 
+# ── Stil ──────────────────────────────────────────────────
+_DOT_SIZE = 18
+_BTN_SIZE = 72
+
+
+def _dot_style(filled: bool) -> str:
+    r = s(_DOT_SIZE // 2)
+    sz = s(_DOT_SIZE)
+    if filled:
+        return (
+            f"background: #60a5fa; border-radius: {r}px;"
+            f" min-width: {sz}px; min-height: {sz}px;"
+            f" max-width: {sz}px; max-height: {sz}px;"
+        )
+    return (
+        f"background: transparent; border: 2px solid rgba(255,255,255,0.3);"
+        f" border-radius: {r}px;"
+        f" min-width: {sz}px; min-height: {sz}px;"
+        f" max-width: {sz}px; max-height: {sz}px;"
+    )
+
+
+def _btn_style():
+    return f"""
+        QPushButton {{
+            background: rgba(255,255,255,0.07);
+            color: white;
+            font-size: {font(26)}px;
+            font-weight: 600;
+            border-radius: {s(_BTN_SIZE // 2)}px;
+            border: 1.5px solid rgba(255,255,255,0.10);
+            min-width: {s(_BTN_SIZE)}px; min-height: {s(_BTN_SIZE)}px;
+            max-width: {s(_BTN_SIZE)}px; max-height: {s(_BTN_SIZE)}px;
+        }}
+        QPushButton:hover {{ background: rgba(255,255,255,0.14); }}
+        QPushButton:pressed {{
+            background: rgba(96,165,250,0.3);
+            border-color: #60a5fa;
+        }}
+    """
+
+
+def _btn_clear_style():
+    return f"""
+        QPushButton {{
+            background: rgba(239,68,68,0.12);
+            color: #fca5a5;
+            font-size: {font(20)}px; font-weight: 700;
+            border-radius: {s(_BTN_SIZE // 2)}px;
+            border: 1.5px solid rgba(239,68,68,0.2);
+            min-width: {s(_BTN_SIZE)}px; min-height: {s(_BTN_SIZE)}px;
+            max-width: {s(_BTN_SIZE)}px; max-height: {s(_BTN_SIZE)}px;
+        }}
+        QPushButton:pressed {{ background: rgba(239,68,68,0.25); }}
+    """
+
+
+def _btn_back_style():
+    return f"""
+        QPushButton {{
+            background: rgba(255,255,255,0.04);
+            color: rgba(255,255,255,0.5);
+            font-size: {font(22)}px; font-weight: 600;
+            border-radius: {s(_BTN_SIZE // 2)}px;
+            border: 1.5px solid rgba(255,255,255,0.08);
+            min-width: {s(_BTN_SIZE)}px; min-height: {s(_BTN_SIZE)}px;
+            max-width: {s(_BTN_SIZE)}px; max-height: {s(_BTN_SIZE)}px;
+        }}
+        QPushButton:pressed {{ background: rgba(255,255,255,0.12); }}
+    """
+
+
+# ── Background auto-login ────────────────────────────────
+class AutoLoginWorker(QThread):
+    result_ready = pyqtSignal(bool, str)
+
+    def __init__(self, api: FrappeAPI):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        cfg = load_config()
+        url, user, pwd, site = cfg.get("url",""), cfg.get("user",""), cfg.get("password",""), cfg.get("site","")
+        if not (url and user and pwd):
+            self.result_ready.emit(False, "Credentials topilmadi")
+            return
+        try:
+            ok, msg = self.api.login(url, user, pwd, site)
+            self.result_ready.emit(ok, msg)
+        except Exception as e:
+            self.result_ready.emit(False, str(e))
+
+
+# ══════════════════════════════════════════════════════════
+#  LoginWindow — markazlashtirilgan PIN ekrani
+# ══════════════════════════════════════════════════════════
 class LoginWindow(QWidget):
     login_successful = pyqtSignal()
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
-        self._active_field = None
-        self._caps = False
-        self._letter_buttons = []
-        self._init_ui()
+        self._api_ready = False
+        self._digits = ""
+        self._setup_first = ""
+        self._setup_state = "verify_old"   # verify_old | enter_new | confirm_new
+        self._mode = "enter"               # enter | setup
 
-    def _init_ui(self):
-        self.setWindowTitle("URY POS — Kirish")
+        self._build_ui()
+        self._start_auto_login()
+
+    # ── Gradient fon ─────────────────────────────────────
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        g = QLinearGradient(0, 0, self.width(), self.height())
+        g.setColorAt(0.0, QColor("#0a0f1e"))
+        g.setColorAt(0.5, QColor("#0d1b3e"))
+        g.setColorAt(1.0, QColor("#061029"))
+        p.fillRect(self.rect(), QBrush(g))
+
+    # ── UI ────────────────────────────────────────────────
+    def _build_ui(self):
+        self.setWindowTitle("Jazira POS — Kassir kirish")
         self.setMinimumSize(s(480), s(600))
         self.showMaximized()
 
-        # ——— Asosiy fon ———
-        self.setStyleSheet("""
-            QWidget#loginBg {
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #0f172a, stop:0.5 #1e293b, stop:1 #0f172a
-                );
-            }
-        """)
-        self.setObjectName("loginBg")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # ——— Asosiy tuzilma: yuqori (karta) + pastki (keyboard) ———
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
+        # Markaziy konteyner — vertikal
+        col = QVBoxLayout()
+        col.setSpacing(s(20))
+        col.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # --- Yuqori qism: karta markazda (scroll area — keyboard chiqqanda scroll bo'ladi) ---
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        top_area = QWidget()
-        top_area.setStyleSheet("background: transparent;")
-        top_layout = QVBoxLayout(top_area)
-        top_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        card = QFrame()
-        card.setObjectName("loginCard")
-        card.setFixedWidth(s(420))
-        card.setStyleSheet(f"""
-            QFrame#loginCard {{
-                background: white;
-                border-radius: {s(20)}px;
-                border: 1px solid #e2e8f0;
-            }}
-        """)
-
-        # Soya effekti
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(s(40))
-        shadow.setOffset(0, s(8))
-        shadow.setColor(QColor(0, 0, 0, 60))
-        card.setGraphicsEffect(shadow)
-
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(s(36), s(32), s(36), s(32))
-        layout.setSpacing(0)
-
-        # ——— Logo / Branding ———
+        # Logo
         logo = QLabel("🍽")
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet(f"font-size: {font(48)}px; margin-bottom: {s(4)}px; background: transparent;")
-        layout.addWidget(logo)
+        logo.setStyleSheet(f"font-size: {font(48)}px; background: transparent;")
+        col.addWidget(logo)
 
-        title = QLabel("URY POS")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(f"""
-            font-size: {font(26)}px; font-weight: 900; color: #0f172a;
-            letter-spacing: 2px; margin-bottom: {s(2)}px; background: transparent;
-        """)
-        layout.addWidget(title)
+        # Brand
+        brand = QLabel("Jazira POS")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand.setStyleSheet(
+            f"font-size: {font(26)}px; font-weight: 900; color: white;"
+            f" letter-spacing: 4px; background: transparent;"
+        )
+        col.addWidget(brand)
 
-        subtitle = QLabel("Kassir tizimiga kirish")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet(f"""
-            font-size: {font(13)}px; color: #94a3b8; margin-bottom: {s(20)}px; background: transparent;
-        """)
-        layout.addWidget(subtitle)
+        col.addSpacing(s(8))
 
-        # ——— Separator ———
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"background: #f1f5f9; max-height: 1px; margin-bottom: {s(16)}px;")
-        layout.addWidget(sep)
+        # Sarlavha
+        self._title = QLabel("PIN kiriting")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title.setStyleSheet(
+            f"font-size: {font(18)}px; font-weight: 700; color: rgba(255,255,255,0.85);"
+            f" background: transparent;"
+        )
+        col.addWidget(self._title)
 
-        # ——— Formalar ———
-        config = load_config()
-        default_url = config.get("url", "")
+        # 4 dot
+        dots_row = QHBoxLayout()
+        dots_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dots_row.setSpacing(s(18))
+        self._dots = []
+        for _ in range(4):
+            d = QLabel()
+            d.setFixedSize(s(_DOT_SIZE), s(_DOT_SIZE))
+            d.setStyleSheet(_dot_style(False))
+            self._dots.append(d)
+            dots_row.addWidget(d)
+        col.addLayout(dots_row)
 
-        INPUT_STYLE = f"""
-            QLineEdit {{
-                padding: {s(12)}px {s(14)}px;
-                font-size: {font(14)}px;
-                border: 1.5px solid #e2e8f0;
-                border-radius: {s(10)}px;
-                background: #f8fafc;
-                color: #1e293b;
-            }}
-            QLineEdit:focus {{
-                border: 1.5px solid #3b82f6;
-                background: #ffffff;
-            }}
-            QLineEdit:disabled {{
-                background: #f1f5f9;
-                color: #94a3b8;
-            }}
-        """
+        # Status / xato labeli
+        self._status = QLabel("")
+        self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status.setWordWrap(True)
+        self._status.setFixedHeight(s(28))
+        self._status.setStyleSheet(
+            f"font-size: {font(13)}px; color: #fca5a5; background: transparent;"
+        )
+        col.addWidget(self._status)
 
-        INPUT_ACTIVE_STYLE = f"""
-            QLineEdit {{
-                padding: {s(12)}px {s(14)}px;
-                font-size: {font(14)}px;
-                border: 2px solid #3b82f6;
-                border-radius: {s(10)}px;
-                background: #ffffff;
-                color: #1e293b;
-            }}
-            QLineEdit:disabled {{
-                background: #f1f5f9;
-                color: #94a3b8;
-            }}
-        """
+        # Numpad
+        col.addWidget(self._build_numpad())
 
-        self._input_style = INPUT_STYLE
-        self._input_active_style = INPUT_ACTIVE_STYLE
+        # PIN reset link
+        self._link = QPushButton("PIN ni qayta o'rnatish")
+        self._link.setStyleSheet(
+            f"QPushButton {{ background: transparent; color: rgba(255,255,255,0.2);"
+            f" font-size: {font(11)}px; border: none; text-decoration: underline; }}"
+            f"QPushButton:hover {{ color: rgba(255,255,255,0.45); }}"
+        )
+        self._link.clicked.connect(self._goto_setup)
+        col.addWidget(self._link, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        LABEL_STYLE = f"""
-            font-size: {font(12)}px; font-weight: 700; color: #64748b;
-            margin-bottom: {s(4)}px; margin-top: {s(10)}px; background: transparent;
-        """
+        root.addLayout(col)
 
-        # Server URL
-        layout.addWidget(self._label("Server manzili", LABEL_STYLE))
-        self.url_input = ClickableLineEdit()
-        self.url_input.setPlaceholderText("masalan: http://192.168.1.53:8000")
-        self.url_input.setText(default_url)
-        self.url_input.setStyleSheet(INPUT_STYLE)
-        self.url_input.clicked.connect(lambda w: self._activate_field(w, "Server manzili"))
-        self.url_input.textChanged.connect(self._sync_kb_display)
-        layout.addWidget(self.url_input)
-
-        # Login (Email)
-        layout.addWidget(self._label("Email yoki Login", LABEL_STYLE))
-        self.user_input = ClickableLineEdit()
-        self.user_input.setPlaceholderText("cashier@example.uz")
-        self.user_input.setStyleSheet(INPUT_STYLE)
-        self.user_input.clicked.connect(lambda w: self._activate_field(w, "Email yoki Login"))
-        self.user_input.textChanged.connect(self._sync_kb_display)
-        layout.addWidget(self.user_input)
-
-        # Parol
-        layout.addWidget(self._label("Parol", LABEL_STYLE))
-        self.password_input = ClickableLineEdit()
-        self.password_input.setPlaceholderText("••••••••")
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setStyleSheet(INPUT_STYLE)
-        self.password_input.clicked.connect(lambda w: self._activate_field(w, "Parol"))
-        self.password_input.textChanged.connect(self._sync_kb_display)
-        layout.addWidget(self.password_input)
-
-
-        # ——— Xatolik xabari ———
-        self.error_label = QLabel("")
-        self.error_label.setWordWrap(True)
-        self.error_label.setVisible(False)
-        self.error_label.setStyleSheet(f"""
-            font-size: {font(12)}px; color: #dc2626; background: #fef2f2;
-            border: 1px solid #fecaca; border-radius: {s(8)}px;
-            padding: {s(8)}px {s(12)}px; margin-top: {s(10)}px;
-        """)
-        layout.addWidget(self.error_label)
-
-        # ——— Login tugma ———
-        self.login_btn = QPushButton("KIRISH")
-        self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.login_btn.setFixedHeight(s(56))
-        self.login_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #2563eb, stop:1 #3b82f6
-                );
-                color: white;
-                font-weight: 800;
-                font-size: {font(15)}px;
-                border-radius: {s(12)}px;
-                border: none;
-                letter-spacing: 1px;
-                margin-top: {s(16)}px;
-            }}
-            QPushButton:hover {{
-                background: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1d4ed8, stop:1 #2563eb
-                );
-            }}
-            QPushButton:pressed {{
-                background: #1e40af;
-            }}
-            QPushButton:disabled {{
-                background: #cbd5e1;
-                color: #94a3b8;
-            }}
-        """)
-        self.login_btn.clicked.connect(self._handle_login)
-        layout.addWidget(self.login_btn)
-
-        # ——— Pastki yozuv ———
-        footer = QLabel("Ury Restaurant POS v1.0")
-        footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet(f"""
-            font-size: {font(11)}px; color: #cbd5e1; margin-top: {s(14)}px; background: transparent;
-        """)
-        layout.addWidget(footer)
-
-        top_layout.addWidget(card)
-        scroll_area.setWidget(top_area)
-        root_layout.addWidget(scroll_area, stretch=1)
-
-        # --- Pastki qism: inline keyboard ---
-        self.keyboard_panel = self._build_keyboard_panel()
-        self.keyboard_panel.setVisible(False)
-        self.keyboard_panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
-        root_layout.addWidget(self.keyboard_panel)
-
-    # ─── Inline Keyboard ──────────────────────────────────
-    def _build_keyboard_panel(self):
-        panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame {
-                background: #f1f5f9;
-                border-top: 2px solid #cbd5e1;
-            }
-        """)
-        panel_layout = QVBoxLayout(panel)
-        panel_layout.setContentsMargins(s(10), s(4), s(10), s(6))
-        panel_layout.setSpacing(s(3))
-
-        # Yuqori qator: aktiv field nomi + display + yopish
-        top_row = QHBoxLayout()
-
-        self.kb_field_label = QLabel("")
-        self.kb_field_label.setStyleSheet(f"""
-            font-size: {font(12)}px; font-weight: 700; color: #3b82f6;
-            background: transparent; padding: 0 {s(4)}px;
-        """)
-
-        self.kb_display = QLabel("")
-        self.kb_display.setStyleSheet(f"""
-            font-size: {font(16)}px; font-weight: 600; color: #334155;
-            background: white; border: 1.5px solid #3b82f6;
-            border-radius: {s(8)}px; padding: {s(6)}px {s(12)}px;
-        """)
-        self.kb_display.setFixedHeight(s(30))
-
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(s(32), s(32))
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: #ef4444; color: white;
-                font-weight: bold; font-size: {font(16)}px;
-                border-radius: {s(8)}px; border: none;
-            }}
-            QPushButton:pressed {{ background: #dc2626; }}
-        """)
-        close_btn.clicked.connect(self._close_keyboard)
-
-        top_row.addWidget(self.kb_field_label)
-        top_row.addWidget(self.kb_display, stretch=1)
-        top_row.addWidget(close_btn)
-        panel_layout.addLayout(top_row)
-
-        # Klaviatura qatorlari
-        self._letter_buttons = []
-        rows = [
-            ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '⌫'],
-            ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-            ['CAPS', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'CLR'],
-            ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', ' SPACE '],
-            ['@', '-', '_', ':', '/', '#', '+', '='],
-        ]
-        for row_keys in rows:
-            row_layout = QHBoxLayout()
-            row_layout.setSpacing(s(3))
-            for key in row_keys:
-                btn = self._make_key(key)
-                row_layout.addWidget(btn)
-            panel_layout.addLayout(row_layout)
-
-        return panel
-
-    def _make_key(self, key):
-        label = key.strip()
-        if label == 'SPACE':
-            label = 'PROBEL'
-        elif label == 'CLR':
-            label = 'TOZALASH'
-        elif label == 'CAPS':
-            label = '⇧ Aa'
-
-        btn = QPushButton(label)
-        btn.setFixedHeight(s(36))
-
-        if key.strip() == '⌫':
-            style = f"background:#fee2e2; color:#ef4444; font-size:{font(14)}px; font-weight:bold;"
-        elif key.strip() == 'CLR':
-            style = f"background:#fff7ed; color:#ea580c; font-size:{font(10)}px; font-weight:bold;"
-        elif key.strip() == 'CAPS':
-            style = f"background:#e0e7ff; color:#4338ca; font-size:{font(11)}px; font-weight:bold;"
-        elif 'SPACE' in key:
-            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(11)}px; font-weight:bold;"
-            btn.setMinimumWidth(s(90))
-        elif key.strip().isdigit():
-            style = f"background:#e0e7ff; color:#3730a3; font-size:{font(13)}px; font-weight:bold;"
+        # Boshlang'ich holat
+        if has_pin():
+            self._set_mode_enter()
         else:
-            style = f"background:white; color:#1e293b; font-size:{font(13)}px; font-weight:600;"
+            self._set_mode_setup_new()
 
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                {style}
-                border: 1px solid #e2e8f0;
-                border-radius: {s(5)}px;
-            }}
-            QPushButton:pressed {{ background: #dbeafe; }}
-        """)
-        btn.clicked.connect(lambda _, k=key.strip(): self._on_key(k))
+    # ── Numpad ────────────────────────────────────────────
+    def _build_numpad(self):
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        grid = QVBoxLayout(w)
+        grid.setSpacing(s(10))
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # Harf tugmalarini saqlash (caps uchun)
-        if len(key.strip()) == 1 and key.strip().isalpha():
-            self._letter_buttons.append(btn)
+        rows = [["7","8","9"], ["4","5","6"], ["1","2","3"], ["✕","0","⌫"]]
+        for keys in rows:
+            row = QHBoxLayout()
+            row.setSpacing(s(10))
+            row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            for k in keys:
+                btn = QPushButton(k)
+                if k == "✕":
+                    btn.setStyleSheet(_btn_clear_style())
+                elif k == "⌫":
+                    btn.setStyleSheet(_btn_back_style())
+                else:
+                    btn.setStyleSheet(_btn_style())
+                btn.clicked.connect(lambda _, key=k: self._on_key(key))
+                row.addWidget(btn)
+            grid.addLayout(row)
+        return w
 
-        return btn
+    # ── Numpad handler ────────────────────────────────────
+    def _on_key(self, key: str):
+        if key == "✕":
+            self._digits = ""
+        elif key == "⌫":
+            self._digits = self._digits[:-1]
+        elif len(self._digits) < 4:
+            self._digits += key
 
-    def _on_key(self, key):
-        if key == 'CAPS':
-            self._caps = not self._caps
-            for btn in self._letter_buttons:
-                txt = btn.text()
-                btn.setText(txt.upper() if self._caps else txt.lower())
-            return
-        if not self._active_field:
-            return
-        current = self._active_field.text()
-        if key == '⌫':
-            new_text = current[:-1]
-        elif key == 'CLR':
-            new_text = ''
-        elif key == 'SPACE':
-            new_text = current + ' '
+        self._refresh_dots()
+        self._status.setText("")
+
+        if len(self._digits) == 4:
+            QTimer.singleShot(100, self._on_complete)
+
+    def _refresh_dots(self):
+        for i, d in enumerate(self._dots):
+            d.setStyleSheet(_dot_style(i < len(self._digits)))
+
+    def _reset_input(self):
+        self._digits = ""
+        self._refresh_dots()
+
+    # ── 4 raqam kiritilganda ─────────────────────────────
+    def _on_complete(self):
+        pin = self._digits
+        self._reset_input()
+
+        if self._mode == "enter":
+            self._verify_pin(pin)
         else:
-            char = key.lower() if not self._caps else key.upper()
-            new_text = current + char
-        self._active_field.setText(new_text)
-        # Display yangilash — parol uchun yashirish
-        if self._active_field == self.password_input:
-            self.kb_display.setText('•' * len(new_text) if new_text else "")
-        else:
-            self.kb_display.setText(new_text)
+            self._handle_setup(pin)
 
-    def _activate_field(self, widget, title: str):
-        # Avvalgi field stilini qaytarish
-        if self._active_field and self._active_field != widget:
-            self._active_field.setStyleSheet(self._input_style)
-        self._active_field = widget
-        widget.setStyleSheet(self._input_active_style)
-        self.kb_field_label.setText(title)
-        # Display yangilash
-        if widget == self.password_input:
-            self.kb_display.setText('•' * len(widget.text()) if widget.text() else "")
-        else:
-            self.kb_display.setText(widget.text())
-        self.keyboard_panel.setVisible(True)
-
-    def _sync_kb_display(self, text):
-        """Fizik klaviatura bilan yozilganda ekrandagi keyboard displayni yangilash."""
-        if not self.keyboard_panel.isVisible() or not self._active_field:
-            return
-        if self._active_field == self.password_input:
-            self.kb_display.setText('•' * len(text) if text else "")
-        else:
-            self.kb_display.setText(text)
-
-    def _close_keyboard(self):
-        if self._active_field:
-            self._active_field.setStyleSheet(self._input_style)
-            self._active_field = None
-        self.keyboard_panel.setVisible(False)
-
-    # ─── Helpers ─────────────────────────────────────────
-    @staticmethod
-    def _label(text: str, style: str) -> QLabel:
-        lbl = QLabel(text)
-        lbl.setStyleSheet(style)
-        return lbl
-
-
-    def _show_error(self, msg: str):
-        self.error_label.setText(f"⚠  {msg}")
-        self.error_label.setVisible(True)
-
-    def _hide_error(self):
-        self.error_label.setVisible(False)
-
-    # ─── Login handler ───────────────────────────────────
-    def _handle_login(self):
-        self._close_keyboard()
-        self._hide_error()
-
-        url = self.url_input.text().strip()
-        user = self.user_input.text().strip()
-        password = self.password_input.text().strip()
-        site = ""
-
-        # Validatsiya
-        if not url:
-            self._show_error("Server manzilini kiriting!")
-            self.url_input.setFocus()
-            return
-        if not user:
-            self._show_error("Email yoki loginni kiriting!")
-            self.user_input.setFocus()
-            return
-        if not password:
-            self._show_error("Parolni kiriting!")
-            self.password_input.setFocus()
-            return
-
-        # http:// avtomatik qo'shish
-        if not url.startswith("http"):
-            url = "http://" + url
-
-        # UI holati
-        self.login_btn.setText("⏳  Kirilmoqda...")
-        self.login_btn.setEnabled(False)
-        self.url_input.setEnabled(False)
-        self.user_input.setEnabled(False)
-        self.password_input.setEnabled(False)
-
-        # Login so'rovi
-        try:
-            success, message = self.api.login(url, user, password, site)
-        except Exception as e:
-            logger.error("Login xatosi: %s", e)
-            success, message = False, f"Kutilmagan xatolik: {e}"
-
-        if success:
-            save_credentials(url, user, password, site)
-            self.api.reload_config()
-            logger.info("Login muvaffaqiyatli: %s (User: %s)", url, user)
+    # ── PIN kirish ────────────────────────────────────────
+    def _verify_pin(self, pin: str):
+        if verify_pin(pin):
+            logger.info("PIN tasdiqlandi")
             self.login_successful.emit()
             self.close()
         else:
-            # Xatolik xabarini foydalanuvchiga tushunarli qilish
-            if "aloqa" in message.lower() or "connection" in message.lower():
-                friendly = "Serverga ulanib bo'lmadi.\nServer manzilini tekshiring yoki internet ulanishini tekshiring."
-            elif "noto'g'ri" in message.lower() or "incorrect" in message.lower():
-                friendly = "Login yoki parol noto'g'ri.\nIltimos, qayta tekshirib ko'ring."
-            elif "timeout" in message.lower():
-                friendly = "Server javob bermadi.\nInternet ulanishini yoki server manzilini tekshiring."
+            self._show_error("PIN noto'g'ri!")
+
+    # ── PIN o'rnatish (3 bosqich) ─────────────────────────
+    def _handle_setup(self, pin: str):
+        if self._setup_state == "verify_old":
+            if verify_pin(pin):
+                self._setup_state = "enter_new"
+                self._title.setText("Yangi PIN kiriting")
+                self._show_status("Eski PIN tasdiqlandi ✅", "#86efac")
+                QTimer.singleShot(800, lambda: self._status.setText(""))
             else:
-                friendly = message
+                self._show_error("Eski PIN noto'g'ri!")
 
-            self._show_error(friendly)
-            self._reset_form()
+        elif self._setup_state == "enter_new":
+            self._setup_first = pin
+            self._setup_state = "confirm_new"
+            self._title.setText("PIN ni tasdiqlang")
+            self._show_status("Qayta kiriting", "#93c5fd")
 
-    def _reset_form(self):
-        self.login_btn.setText("KIRISH")
-        self.login_btn.setEnabled(True)
-        self.url_input.setEnabled(True)
-        self.user_input.setEnabled(True)
-        self.password_input.setEnabled(True)
+        elif self._setup_state == "confirm_new":
+            if pin == self._setup_first:
+                save_pin(pin)
+                logger.info("PIN o'rnatildi")
+                self.login_successful.emit()
+                self.close()
+            else:
+                self._setup_state = "enter_new"
+                self._setup_first = ""
+                self._title.setText("Yangi PIN kiriting")
+                self._show_error("PIN mos kelmadi! Qaytadan kiriting")
+
+    # ── Mode o'tkazish ────────────────────────────────────
+    def _set_mode_enter(self):
+        self._mode = "enter"
+        self._digits = ""
+        self._refresh_dots()
+        self._title.setText("PIN kiriting")
+        self._status.setText("")
+        self._link.setText("PIN ni qayta o'rnatish")
+        self._link.setVisible(True)
+        self._link.clicked.disconnect()
+        self._link.clicked.connect(self._goto_setup)
+
+    def _set_mode_setup_new(self):
+        """Birinchi marta PIN o'rnatish (eski PIN yo'q)."""
+        self._mode = "setup"
+        self._setup_state = "enter_new"
+        self._setup_first = ""
+        self._digits = ""
+        self._refresh_dots()
+        self._title.setText("PIN belgilang")
+        self._status.setText("")
+        self._link.setVisible(False)
+
+    def _goto_setup(self):
+        self._mode = "setup"
+        self._setup_first = ""
+        self._digits = ""
+        self._refresh_dots()
+        if has_pin():
+            self._setup_state = "verify_old"
+            self._title.setText("Eski PIN ni kiriting")
+            self._show_status("Xavfsizlik uchun eski PINni kiriting", "#fbbf24")
+        else:
+            self._setup_state = "enter_new"
+            self._title.setText("PIN belgilang")
+            self._status.setText("")
+        self._link.setText("Bekor qilish")
+        self._link.setVisible(has_pin())
+        self._link.clicked.disconnect()
+        self._link.clicked.connect(self._set_mode_enter)
+
+    # ── Yordamchi ─────────────────────────────────────────
+    def _show_error(self, text: str):
+        self._status.setStyleSheet(
+            f"font-size: {font(13)}px; color: #fca5a5; background: transparent;"
+        )
+        self._status.setText(f"❌  {text}")
+        QTimer.singleShot(1500, lambda: self._status.setText(""))
+
+    def _show_status(self, text: str, color: str = "#93c5fd"):
+        self._status.setStyleSheet(
+            f"font-size: {font(13)}px; color: {color}; background: transparent;"
+        )
+        self._status.setText(text)
+
+    # ── Background auto-login ─────────────────────────────
+    def _start_auto_login(self):
+        self._auto_worker = AutoLoginWorker(self.api)
+        self._auto_worker.result_ready.connect(self._on_auto_login)
+        self._auto_worker.start()
+
+    def _on_auto_login(self, success: bool, message: str):
+        self._api_ready = success
+        if success:
+            logger.info("Background auto-login muvaffaqiyatli")
+            self.api.reload_settings()
+        else:
+            logger.warning("Background auto-login xatosi: %s", message)
+            self._show_status("⚠  Server bilan aloqa yo'q", "#fbbf24")

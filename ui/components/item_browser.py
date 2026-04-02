@@ -1,18 +1,55 @@
 import requests
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QScrollArea, QGridLayout, QLabel, QSizePolicy, QFrame,
+    QScroller, QScrollerProperties,
 )
-from PyQt6.QtCore import pyqtSignal, Qt, QSize, QThread, QObject, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
 from database.models import Item, ItemPrice, db
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import ITEM_LOAD_LIMIT, IMAGE_TIMEOUT
 from ui.components.keyboard import TouchKeyboard
+from ui.components.loading import LoadingOverlay
 from ui.scale import s, font
 
 logger = get_logger(__name__)
+
+
+def _enable_touch_scroll(scroll_area: QScrollArea):
+    """QScrollArea ga sensorli ekran uchun kinetic scroll qo'shish.
+    Barmaq bilan surish (swipe) ishlaydi — tezlik bilan davom etadi."""
+    scroller = QScroller.scroller(scroll_area.viewport())
+    scroller.grabGesture(scroll_area.viewport(), QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+
+    props = scroller.scrollerProperties()
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DragStartDistance, 0.004)
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.OvershootDragDistanceFactor, 0.1)
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.OvershootScrollDistanceFactor, 0.1)
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DecelerationFactor, 0.85)
+    scroller.setScrollerProperties(props)
+
+    # Touch-friendly scrollbar — kattaroq
+    scroll_area.setStyleSheet(scroll_area.styleSheet() + f"""
+        QScrollBar:vertical {{
+            width: {s(10)}px;
+            background: transparent;
+            border: none;
+            margin: {s(4)}px 0;
+        }}
+        QScrollBar::handle:vertical {{
+            background: #cbd5e1;
+            border-radius: {s(5)}px;
+            min-height: {s(40)}px;
+        }}
+        QScrollBar::handle:vertical:hover {{
+            background: #94a3b8;
+        }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+            height: 0px;
+        }}
+    """)
 
 
 class ImageLoader(QThread):
@@ -20,8 +57,12 @@ class ImageLoader(QThread):
 
     MUHIM: QPixmap faqat GUI threadda yaratilishi mumkin.
     Shuning uchun QImage yuboramiz, QPixmap ga main threadda aylantiriladi.
+
+    _cache — class-level in-memory kesh. Bir marta yuklangan rasm qayta
+    serverga so'rov yubormasdan darhol qaytariladi.
     """
     image_loaded = pyqtSignal(QImage)
+    _cache: dict = {}   # url → QImage  (barcha instancelar uchun umumiy)
 
     def __init__(self, url, api):
         super().__init__()
@@ -29,6 +70,12 @@ class ImageLoader(QThread):
         self.api = api
 
     def run(self):
+        # Keshda bor — darhol qaytarish, server so'rovi yo'q
+        cached = ImageLoader._cache.get(self.url)
+        if cached is not None:
+            if not cached.isNull():
+                self.image_loaded.emit(cached)
+            return
         try:
             full_url = self.url if self.url.startswith("http") else f"{self.api.url}{self.url}"
             session = self.api._get_session()
@@ -36,6 +83,7 @@ class ImageLoader(QThread):
             if response.status_code == 200:
                 image = QImage()
                 if image.loadFromData(response.content):
+                    ImageLoader._cache[self.url] = image   # keshga yozish
                     self.image_loaded.emit(image)
         except Exception:
             pass
@@ -63,27 +111,27 @@ class ItemButton(QFrame):
 
         # --- Rasm qismi ---
         self.image_container = QWidget()
-        self.image_container.setFixedHeight(s(130))
+        self.image_container.setFixedHeight(s(155))
         _r = s(14)
         self.image_container.setStyleSheet(f"""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #f0f4ff, stop:1 #e8f0fe);
+            background: #f8fafc;
             border-top-left-radius: {_r}px;
             border-top-right-radius: {_r}px;
         """)
 
         img_inner = QVBoxLayout(self.image_container)
         img_inner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        img_inner.setContentsMargins(0, 0, 0, 0)
 
-        _img = s(90)
+        _img = s(140)
         self.image_label = QLabel()
         self.image_label.setFixedSize(_img, _img)
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setStyleSheet(f"""
-            background: rgba(255,255,255,0.7);
-            border-radius: {s(10)}px;
+            background: transparent;
+            border: none;
             color: #94a3b8;
-            font-size: {font(28)}px;
+            font-size: {font(40)}px;
         """)
         self.image_label.setText("🍽")
 
@@ -96,7 +144,6 @@ class ItemButton(QFrame):
         layout.addWidget(self.image_container)
 
         # --- Ma'lumot qismi ---
-        _r = s(14)
         info_container = QWidget()
         info_container.setStyleSheet(f"""
             background: white;
@@ -104,38 +151,37 @@ class ItemButton(QFrame):
             border-bottom-right-radius: {_r}px;
         """)
         info_layout = QVBoxLayout(info_container)
-        info_layout.setContentsMargins(s(10), s(10), s(10), s(12))
-        info_layout.setSpacing(s(6))
+        info_layout.setContentsMargins(s(8), s(8), s(8), s(10))
+        info_layout.setSpacing(s(5))
 
-        display_name = item_name if len(item_name) <= 22 else item_name[:20] + "..."
+        display_name = item_name if len(item_name) <= 28 else item_name[:26] + "…"
         name_label = QLabel(display_name)
         name_label.setWordWrap(True)
         name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_label.setToolTip(item_name)
         name_label.setStyleSheet(f"""
-            font-size: {font(13)}px;
+            font-size: {font(14)}px;
             font-weight: 700;
             color: #1e293b;
             background: transparent;
             border: none;
             line-height: 1.3;
         """)
-        name_label.setFixedHeight(s(36))
+        name_label.setFixedHeight(s(44))
 
         price_str = f"{price:,.0f}".replace(",", " ") + f" {currency}"
         price_label = QLabel(price_str)
         price_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         price_label.setStyleSheet(f"""
-            font-size: {font(13)}px;
+            font-size: {font(14)}px;
             font-weight: 800;
-            color: white;
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 #3b82f6, stop:1 #6366f1);
+            color: #1d4ed8;
+            background: #eff6ff;
             border-radius: {s(8)}px;
             padding: {s(4)}px {s(8)}px;
             border: none;
         """)
-        price_label.setFixedHeight(s(28))
+        price_label.setFixedHeight(s(32))
 
         info_layout.addWidget(name_label)
         info_layout.addWidget(price_label)
@@ -174,10 +220,14 @@ class ItemButton(QFrame):
     def _set_pixmap(self, image: QImage):
         """QImage ni main threadda QPixmap ga aylantirish va ko'rsatish."""
         try:
-            _sz = s(82)
+            _sz = s(140)
             pixmap = QPixmap.fromImage(image)
-            scaled = pixmap.scaled(_sz, _sz, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            self.image_label.setPixmap(scaled)
+            scaled = pixmap.scaled(_sz, _sz, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            # Markazdan kesish
+            x = (scaled.width() - _sz) // 2
+            y = (scaled.height() - _sz) // 2
+            cropped = scaled.copy(x, y, _sz, _sz)
+            self.image_label.setPixmap(cropped)
             self.image_label.setText("")
         except RuntimeError:
             pass  # Widget allaqachon o'chirilgan
@@ -205,6 +255,9 @@ class ItemBrowser(QWidget):
         self._last_columns = 0
         self._caps = False
         self._letter_buttons = []
+        # Loaderlar hali ishlayotganda o'chirishni kechiktirish uchun
+        # (GC'dan himoya — "QThread destroyed while running" xatosini oldini olish)
+        self._pending_delete: list = []
         self._resize_timer = QTimer()
         self._resize_timer.setSingleShot(True)
         self._resize_timer.setInterval(150)
@@ -235,7 +288,17 @@ class ItemBrowser(QWidget):
         self.category_scroll = QScrollArea()
         self.category_scroll.setWidgetResizable(True)
         self.category_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.category_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.category_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.category_scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
+                width: {s(6)}px; background: transparent; border: none;
+            }}
+            QScrollBar::handle:vertical {{
+                background: #cbd5e1; border-radius: {s(3)}px; min-height: {s(30)}px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+        """)
         self.category_container = QWidget()
         self.category_container.setStyleSheet("background: transparent;")
         self.category_layout = QVBoxLayout(self.category_container)
@@ -244,6 +307,8 @@ class ItemBrowser(QWidget):
         self.category_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.category_scroll.setWidget(self.category_container)
         cat_outer.addWidget(self.category_scroll)
+        # Touch scroll — kategoriyalar
+        _enable_touch_scroll(self.category_scroll)
 
         main_layout.addWidget(cat_frame)
 
@@ -284,7 +349,7 @@ class ItemBrowser(QWidget):
         outer_layout.setSpacing(0)
 
         self.items_grid = QGridLayout()
-        self.items_grid.setSpacing(s(12))
+        self.items_grid.setSpacing(s(14))
         self.items_grid.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         outer_layout.addLayout(self.items_grid)
@@ -292,6 +357,11 @@ class ItemBrowser(QWidget):
 
         self.items_scroll.setWidget(self.items_container)
         right_layout.addWidget(self.items_scroll, stretch=1)
+        # Touch scroll — tovarlar gridi
+        _enable_touch_scroll(self.items_scroll)
+
+        # Loading overlay — items_scroll ustida
+        self._loading = LoadingOverlay(self.items_scroll, text="Tovarlar yuklanmoqda...", size=44)
 
         # --- Inline Keyboard Panel ---
         self.keyboard_panel = self._build_keyboard_panel()
@@ -437,8 +507,16 @@ class ItemBrowser(QWidget):
         self.keyboard_panel.setVisible(False)
 
     def load_categories(self):
+        # Avval mavjud barcha kategoriya tugmalarini tozalash
+        while self.category_layout.count():
+            item = self.category_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        self.current_category = None  # "Barchasi" ga qaytarish
+
         try:
-            cats = [r.course for row in Item.select(Item.course).distinct() if (r := row).course]
+            cats = [r.course for r in Item.select(Item.course).distinct() if r.course]
             self._add_cat_btn("Barchasi", True)
             for c in sorted(cats):
                 self._add_cat_btn(c)
@@ -449,25 +527,26 @@ class ItemBrowser(QWidget):
         btn = QPushButton(name)
         btn.setCheckable(True)
         btn.setChecked(is_all)
-        btn.setFixedHeight(s(52))
+        btn.setFixedHeight(s(56))
         btn.setStyleSheet(f"""
             QPushButton {{
-                font-size: {font(11)}px;
-                font-weight: 700;
+                font-size: {font(13)}px;
+                font-weight: 800;
                 text-align: center;
-                padding: {s(6)}px {s(4)}px;
+                padding: {s(8)}px {s(6)}px;
                 border-radius: {s(10)}px;
                 background: transparent;
-                color: #64748b;
+                color: #475569;
                 border: none;
             }}
             QPushButton:checked {{
                 background: #eff6ff;
-                color: #2563eb;
+                color: #1d4ed8;
+                border: 1.5px solid #bfdbfe;
             }}
             QPushButton:hover:!checked {{
                 background: #f1f5f9;
-                color: #334155;
+                color: #1e293b;
             }}
         """)
         btn.clicked.connect(lambda: self._on_cat_click(btn, name, is_all))
@@ -482,25 +561,71 @@ class ItemBrowser(QWidget):
         self.load_items(self.search_input.text())
 
     def _calc_grid_columns(self):
+        """Ekran kengligiga qarab ustunlar soni.
+        15.6" (1920px) → 4 ta,  24"+ → 5-6 ta,  kichik → 3 ta."""
         available = self.items_scroll.viewport().width()
         if available <= 0:
             available = s(600)
         spacing = self.items_grid.spacing()
-        min_card_width = s(170)
+        min_card_width = s(220)  # kattaroq karta = kamroq ustun
         cols = max(2, (available + spacing) // (min_card_width + spacing))
-        return cols
+        return min(cols, 6)  # Maksimum 6 ustun
+
+    def _cleanup_pending(self, widget):
+        """Loader tugagach widget'ni xavfsiz o'chirish (GUI threadga qaytib keladi)."""
+        try:
+            self._pending_delete.remove(widget)
+        except ValueError:
+            pass
+        widget.deleteLater()
+
+    def shutdown(self):
+        """App yopilganda barcha ImageLoader threadlarini to'xtatish."""
+        # Pending delete ro'yxatidagi — loaderlar allaqachon disconnect qilingan,
+        # shunchaki tugashini kutamiz
+        for widget in list(self._pending_delete):
+            if hasattr(widget, 'loader') and widget.loader.isRunning():
+                widget.loader.wait(3000)
+            widget.deleteLater()
+        self._pending_delete.clear()
+
+        # Hozirgi grid dagi loaderlarni to'xtatish
+        for i in range(self.items_grid.count()):
+            child = self.items_grid.itemAt(i)
+            if not child:
+                continue
+            widget = child.widget()
+            if widget and hasattr(widget, 'loader') and widget.loader.isRunning():
+                try:
+                    widget.loader.image_loaded.disconnect()
+                except RuntimeError:
+                    pass
+                widget.loader.wait(3000)
 
     def load_items(self, search=""):
-        # Eski kartalarni xavfsiz tozalash — ImageLoader threadlarini to'xtatish
+        # Loading ko'rsatish
+        self._loading.show_loading()
+
+        # Eski kartalarni xavfsiz tozalash
         while self.items_grid.count():
             child = self.items_grid.takeAt(0)
             widget = child.widget()
             if widget:
-                # ImageLoader ishlayotgan bo'lsa — signal uzib, kutish
                 if hasattr(widget, 'loader') and widget.loader.isRunning():
-                    widget.loader.image_loaded.disconnect()
-                    widget.loader.wait(500)
-                widget.deleteLater()
+                    # Signal uzish — eski rasm yangi widget'ga tushmasin
+                    try:
+                        widget.loader.image_loaded.disconnect()
+                    except RuntimeError:
+                        pass
+                    # wait() CHAQIRMAYMIZ — GUI thread bloklanmasin.
+                    # Widget'ni pending ro'yxatida saqlaymiz (GC'dan himoya).
+                    # Loader tugagach finished → _cleanup_pending → deleteLater.
+                    self._pending_delete.append(widget)
+                    widget.loader.finished.connect(
+                        lambda w=widget: self._cleanup_pending(w)
+                    )
+                else:
+                    widget.deleteLater()
 
         columns = self._calc_grid_columns()
         self._last_columns = columns
@@ -529,6 +654,15 @@ class ItemBrowser(QWidget):
                     row += 1
         except Exception as e:
             logger.error("Tovarlarni yuklashda xatolik: %s", e)
+
+        # Loading yashirish
+        self._loading.hide_loading()
+
+        # Agar hech narsa topilmagan bo'lsa
+        if self.items_grid.count() == 0 and not search:
+            self._loading.set_text("Tovarlar topilmadi.\nSinxronizatsiya qiling.")
+            self._loading.show_loading()
+            self._loading._spinner.stop()  # faqat matn, spinner yo'q
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

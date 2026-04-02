@@ -8,10 +8,9 @@ faulthandler.enable()
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QMessageBox
 from core.api import FrappeAPI
 from core.logger import get_logger
-from core.config import clear_credentials
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
 from ui.styles import get_global_style
@@ -52,32 +51,20 @@ def main():
         if windows["login"]:
             windows["login"].close()
             windows["login"] = None
-            
-        # API instance'ni Asosiy oynaga beramiz
+
         windows["main"] = MainWindow(shared_api)
-        windows["main"].logout_requested.connect(handle_logout)
         windows["main"].showMaximized()
 
-    def handle_logout():
-        logger.info("Foydalanuvchi tizimdan chiqdi")
-        clear_credentials()
-        shared_api.reload_config()
-        show_login()
+    if not shared_api.is_configured():
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Critical)
+        msg.setWindowTitle("Tizim sozlanmagan")
+        msg.setText(".env fayli topilmadi yoki to'liq emas.\n\nAdmin FRAPPE_URL, FRAPPE_USER, FRAPPE_PASSWORD ni sozlashi kerak.")
+        msg.exec()
+        sys.exit(1)
 
-    if shared_api.is_configured():
-        # Workerlardan OLDIN login qilish — cookie barcha threadlarga tarqaladi
-        if shared_api.user and shared_api.password:
-            success, msg = shared_api.login(
-                shared_api.url, shared_api.user, shared_api.password, shared_api.site
-            )
-            if not success:
-                logger.warning("Avtomatik login xatosi: %s — login oynasi ochiladi", msg)
-                show_login()
-                logger.info("Ilova ishga tushdi")
-                sys.exit(app.exec())
-        show_main()
-    else:
-        show_login()
+    # Har doim PIN ekrani — kassir har safar PIN kiritishi shart
+    show_login()
 
     logger.info("Ilova ishga tushdi")
     sys.exit(app.exec())

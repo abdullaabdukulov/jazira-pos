@@ -15,6 +15,7 @@ from core.receipt_builder import (
     build_customer_receipt,
     build_production_receipt,
     build_cash_drawer_command,
+    build_z_report_receipt,
     get_item_groups_map,
 )
 
@@ -188,14 +189,96 @@ def open_cash_drawer() -> bool:
 
 
 def reprint_receipt(order_data: dict, payments_list: list) -> bool:
-    """Faqat mijoz printeriga qayta chop etish."""
+    """Faqat mijoz printeriga qayta chop etish (backward compat alias)."""
+    return reprint_customer(order_data, payments_list)
+
+
+def reprint_customer(order_data: dict, payments_list: list) -> bool:
+    """Faqat mijoz chekini qayta chop etish."""
     cfg = _get_printer_config()
     if not cfg.get("qz_print", 0):
         return False
     customer_printer = cfg["customer_printer"]
     if not customer_printer:
         return False
-    receipt_data = build_customer_receipt(
-        order_data, payments_list, {"company": cfg["company"]}
-    )
-    return _send_raw(customer_printer, receipt_data)
+    try:
+        receipt_data = build_customer_receipt(
+            order_data, payments_list, {"company": cfg["company"]}
+        )
+        return _send_raw(customer_printer, receipt_data)
+    except Exception as e:
+        logger.error("Mijoz reprint xatosi: %s", e)
+        return False
+
+
+def reprint_production(order_data: dict, items_list: list = None) -> dict:
+    """Faqat production (oshxona/bar) unitlarga qayta chop etish.
+
+    Qaytaradi: {unit_name: True/False, ...}
+    """
+    results = {}
+    cfg = _get_printer_config()
+    if not cfg.get("qz_print", 0):
+        return results
+
+    prod_units = cfg["production_units"]
+    if not prod_units:
+        return results
+
+    if items_list is None:
+        items_list = order_data.get("items", [])
+
+    item_groups_map = get_item_groups_map(items_list)
+
+    for unit in prod_units:
+        unit_name = unit.get("name", "")
+        unit_printer = unit.get("qz_printer_name", "")
+        if not unit_printer:
+            continue
+        unit_item_groups = set(unit.get("item_groups", []))
+        unit_items = [
+            item for item in items_list
+            if item_groups_map.get(item.get("item_code", item.get("item", ""))) in unit_item_groups
+        ]
+        if not unit_items:
+            continue
+        try:
+            receipt_data = build_production_receipt(order_data, unit_items, unit_name)
+            results[unit_name] = _send_raw(unit_printer, receipt_data)
+        except Exception as e:
+            logger.error("Production reprint xatosi (%s): %s", unit_name, e)
+            results[unit_name] = False
+
+    return results
+
+
+def reprint_all(order_data: dict, payments_list: list) -> dict:
+    """Mijoz cheki + barcha production unitlar.
+
+    Qaytaradi: {"customer": True/False, unit_name: True/False, ...}
+    """
+    results = {}
+    results["customer"] = reprint_customer(order_data, payments_list)
+    results.update(reprint_production(order_data))
+    return results
+
+
+def print_z_report(report_data: dict) -> bool:
+    """Z-otchyot (smena hisoboti) ni mijoz printeriga chop etish."""
+    cfg = _get_printer_config()
+    if not cfg.get("qz_print", 0):
+        logger.info("Printer yoqilmagan — Z-report chop etilmadi")
+        return False
+    customer_printer = cfg["customer_printer"]
+    if not customer_printer:
+        logger.warning("Mijoz printeri sozlanmagan — Z-report chop etilmadi")
+        return False
+    try:
+        receipt_data = build_z_report_receipt(report_data)
+        result = _send_raw(customer_printer, receipt_data)
+        if result:
+            logger.info("Z-report chop etildi: %s", report_data.get("shift_id", ""))
+        return result
+    except Exception as e:
+        logger.error("Z-report chop etishda xatolik: %s", e)
+        return False

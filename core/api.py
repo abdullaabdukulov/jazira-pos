@@ -10,24 +10,30 @@ logger = get_logger(__name__)
 
 class FrappeAPI:
     def __init__(self):
-        self._local = threading.local()
+        self._sessions_lock = threading.Lock()
+        self._sessions: dict = {}          # thread_id → requests.Session
         self._shared_cookies = {}
         self._login_lock = threading.Lock()
+        self._aborting = False
         self.reload_config()
 
     def _get_session(self) -> requests.Session:
         """Har bir thread uchun alohida requests.Session qaytaradi.
         Shared cookie'larni yangi session'ga ko'chiradi."""
-        if not hasattr(self._local, "session"):
-            self._local.session = requests.Session()
-            # _shared_cookies — oddiy dict, GIL ostida thread-safe
-            cookies = self._shared_cookies
-            if cookies:
-                self._local.session.cookies.update(cookies)
-        return self._local.session
+        if self._aborting:
+            raise requests.exceptions.ConnectionError("API yopilmoqda")
+        tid = threading.get_ident()
+        with self._sessions_lock:
+            if tid not in self._sessions:
+                session = requests.Session()
+                session.headers.update({"Expect": ""})
+                if self._shared_cookies:
+                    session.cookies.update(self._shared_cookies)
+                self._sessions[tid] = session
+            return self._sessions[tid]
 
     def reload_config(self):
-        """Config ni qayta yuklash va barcha sessionlarni tozalash (logout uchun)."""
+        """Config ni qayta yuklash va barcha sessionlarni tozalash (FAQAT logout uchun)."""
         config = load_config()
         self.url = config.get("url", "").rstrip("/")
         self.site = config.get("site", "")
@@ -35,13 +41,48 @@ class FrappeAPI:
         self.api_secret = config.get("api_secret", "")
         self.user = config.get("user", "")
         self.password = config.get("password", "")
-        # Barcha eski sessionlarni tozalash (logout/re-login)
         self._shared_cookies = {}
-        self._local = threading.local()
+        self._aborting = False
+        with self._sessions_lock:
+            for s in self._sessions.values():
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            self._sessions.clear()
+
+    def reload_settings(self):
+        """Config ni qayta o'qish — session va cookie'larni SAQLAB qoladi.
+        Login dan keyin chaqirish uchun (sync, pos_profile yangilanishi)."""
+        config = load_config()
+        self.url = config.get("url", "").rstrip("/")
+        self.site = config.get("site", "")
+        self.api_key = config.get("api_key", "")
+        self.api_secret = config.get("api_secret", "")
+        self.user = config.get("user", "")
+        self.password = config.get("password", "")
+        # _shared_cookies va _sessions o'ZGARTIRILMAYDI
+
+    def abort_all(self):
+        """Barcha aktiv HTTP ulanishlarni to'xtatish (app yopilganda).
+
+        Barcha thread'lardagi bloklangan session.get/post ni darhol
+        ConnectionError bilan yakunlaydi — thread'lar except blokida
+        ushlab, o'z-o'zidan chiqib ketadi.
+        """
+        self._aborting = True
+        with self._sessions_lock:
+            for session in self._sessions.values():
+                try:
+                    session.close()
+                except Exception:
+                    pass
+            self._sessions.clear()
 
     def get_headers(self, is_json=True) -> dict:
         headers = {
             "Accept": "application/json",
+            "Expect": "",
         }
 
         # Multi-site bench uchun sayt nomini header'da yuboramiz
@@ -65,7 +106,7 @@ class FrappeAPI:
             "usr": usr,
             "pwd": pwd
         }
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": "application/json", "Expect": ""}
         if site:
             headers["X-Frappe-Site-Name"] = site
 
@@ -200,6 +241,7 @@ class FrappeAPI:
             if response.status_code == 200:
                 return True, response.json().get("message", response.json())
             else:
+                logger.error("call_method %s — HTTP %d: %s", method, response.status_code, response.text[:500])
                 return False, f"Server xatosi ({response.status_code})"
         except Exception as e:
             logger.error("call_method %s xatosi: %s", method, e)

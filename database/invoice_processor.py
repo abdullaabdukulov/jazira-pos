@@ -1,6 +1,7 @@
 """Shared invoice processing logic for sync and offline_sync workers."""
 import json
 from core.logger import get_logger
+from core.constants import ORDER_TYPE_MAP
 
 logger = get_logger(__name__)
 
@@ -28,8 +29,10 @@ def is_permanent_error(error_msg: str) -> bool:
 #  Mandatory field defaults
 # ──────────────────────────────────────────────────
 def ensure_mandatory_fields(payload: dict):
+    saved_payments = payload.get("_payments") or []
+    default_mop = saved_payments[0]["mode_of_payment"] if saved_payments else "Cash"
     defaults = {
-        "mode_of_payment": "Cash",
+        "mode_of_payment": default_mop,
         "no_of_pax": 1,
         "last_invoice": "",
         "waiter": payload.get("cashier") or "Administrator",  # server API talab qiladi
@@ -106,6 +109,8 @@ def process_pending_invoice(api, invoice) -> tuple[str, str]:
         saved_payments = payload.pop("_payments", None)
         existing_order_name = payload.pop("_sync_order_name", None)
         ensure_mandatory_fields(payload)
+        if "order_type" in payload:
+            payload["order_type"] = ORDER_TYPE_MAP.get(payload["order_type"], payload["order_type"])
 
         # Agar sync_order allaqachon muvaffaqiyatli bo'lgan bo'lsa (faqat make_invoice xato qilgan),
         # qayta sync_order qilmasdan to'g'ridan-to'g'ri submit_invoice qilamiz

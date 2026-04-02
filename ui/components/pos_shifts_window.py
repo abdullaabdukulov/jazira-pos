@@ -1,9 +1,11 @@
 """POS Opening Entry ro'yxati — filialga tegishli barcha kassa ochish/yopish tarixi."""
 import json
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFrame, QScrollArea, QGridLayout
+    QFrame, QScrollArea, QGridLayout, QMessageBox,
+    QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
@@ -12,6 +14,17 @@ from core.logger import get_logger
 from ui.scale import s, font
 
 logger = get_logger(__name__)
+
+
+def _touch_scroll(widget):
+    """Sensorli ekran uchun kinetic scroll."""
+    viewport = widget.viewport()
+    scroller = QScroller.scroller(viewport)
+    scroller.grabGesture(viewport, QScroller.ScrollerGestureType.LeftMouseButtonGesture)
+    props = scroller.scrollerProperties()
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DragStartDistance, 0.004)
+    props.setScrollMetric(QScrollerProperties.ScrollMetric.DecelerationFactor, 0.85)
+    scroller.setScrollerProperties(props)
 
 
 class FetchShiftsWorker(QThread):
@@ -83,6 +96,100 @@ class FetchShiftDetailWorker(QThread):
                 payments = closing_doc.get("payment_reconciliation", [])
 
         self.result_ready.emit(True, doc, payments)
+
+
+class FetchZReportDataWorker(QThread):
+    """Smena uchun Z-otchyot ma'lumotlarini serverdan olish."""
+    result_ready = pyqtSignal(bool, dict)
+
+    def __init__(self, api: FrappeAPI, opening_name: str):
+        super().__init__()
+        self.api = api
+        self.opening_name = opening_name
+
+    def run(self):
+        try:
+            # 1. Opening Entry
+            ok, opening_doc = self.api.call_method(
+                "frappe.client.get",
+                {"doctype": "POS Opening Entry", "name": self.opening_name},
+            )
+            if not ok or not isinstance(opening_doc, dict):
+                self.result_ready.emit(False, {})
+                return
+
+            # 2. Closing Entry
+            closing_list = self.api.fetch_data(
+                "POS Closing Entry",
+                fields=json.dumps(["name", "posting_date", "posting_time"]),
+                filters=json.dumps([
+                    ["POS Closing Entry", "pos_opening_entry", "=", self.opening_name],
+                    ["POS Closing Entry", "docstatus", "=", 1],
+                ]),
+                limit=1,
+            )
+
+            payment_reconciliation = []
+            closed_at = "—"
+            total_invoices = 0
+
+            if closing_list:
+                ok2, closing_doc = self.api.call_method(
+                    "frappe.client.get",
+                    {"doctype": "POS Closing Entry", "name": closing_list[0]["name"]},
+                )
+                if ok2 and isinstance(closing_doc, dict):
+                    payment_reconciliation = closing_doc.get("payment_reconciliation", [])
+                    total_invoices = int(closing_doc.get("total_quantity", 0))
+                    p_date = closing_doc.get("posting_date", "")
+                    p_time = str(closing_doc.get("posting_time", ""))[:5]
+                    closed_at = f"{p_date}  {p_time}"
+
+            cfg = load_config()
+
+            # Ochilish vaqti
+            creation = str(opening_doc.get("creation", ""))
+            opened_at = creation[:10] + "  " + creation[11:16] if len(creation) >= 16 else creation
+
+            # Naqd pul ajratish
+            _CASH_KEYS = {"cash", "naqd", "naqd pul"}
+            expected_cash = 0.0
+            actual_cash = 0.0
+            total_sales = sum(float(p.get("expected_amount", 0)) for p in payment_reconciliation)
+
+            for p in payment_reconciliation:
+                if p.get("mode_of_payment", "").lower().strip() in _CASH_KEYS:
+                    expected_cash = float(p.get("expected_amount", 0))
+                    actual_cash = float(p.get("closing_amount", 0))
+            # Agar hech biri "naqd" bo'lmasa — birinchisi
+            if expected_cash == 0 and payment_reconciliation:
+                expected_cash = float(payment_reconciliation[0].get("expected_amount", 0))
+                actual_cash = float(payment_reconciliation[0].get("closing_amount", 0))
+
+            cashier = opening_doc.get("user", "—")
+            if "@" in cashier:
+                cashier = cashier.split("@")[0]
+
+            report_data = {
+                "terminal_name": cfg.get("company", "JAZIRA POS"),
+                "pos_profile": cfg.get("pos_profile", ""),
+                "shift_id": self.opening_name,
+                "cashier": cashier,
+                "opened_at": opened_at,
+                "closed_at": closed_at,
+                "payments": payment_reconciliation,
+                "total_invoices": total_invoices,
+                "total_sales": total_sales,
+                "expected_cash": expected_cash,
+                "actual_cash": actual_cash,
+                "cash_diff": actual_cash - expected_cash,
+            }
+
+            self.result_ready.emit(True, report_data)
+
+        except Exception as e:
+            logger.error("FetchZReportDataWorker xatosi: %s", e)
+            self.result_ready.emit(False, {})
 
 
 class ShiftDetailDialog(QDialog):
@@ -174,9 +281,28 @@ class ShiftDetailDialog(QDialog):
 
         scroll.setWidget(self.content)
         main_layout.addWidget(scroll, 1)
+        _touch_scroll(scroll)
 
         # --- Footer ---
         footer_layout = QHBoxLayout()
+
+        self.z_print_btn = QPushButton("🖨  Z-Chop etish")
+        self.z_print_btn.setFixedHeight(s(45))
+        self.z_print_btn.setEnabled(False)
+        self.z_print_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.z_print_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #1d4ed8; color: white;
+                font-weight: bold; font-size: {font(14)}px;
+                border-radius: {s(8)}px; border: none;
+                padding: 0 {s(20)}px;
+            }}
+            QPushButton:hover {{ background: #1e40af; }}
+            QPushButton:disabled {{ background: #cbd5e1; color: #94a3b8; }}
+        """)
+        self.z_print_btn.clicked.connect(self._z_print)
+        footer_layout.addWidget(self.z_print_btn)
+
         footer_layout.addStretch()
 
         close_btn = QPushButton("Yopish")
@@ -262,6 +388,10 @@ class ShiftDetailDialog(QDialog):
         creation = str(doc.get("creation", ""))
         time_str = creation[11:16] if len(creation) > 16 else ""
         status = doc.get("status", "")
+
+        # Z-Chop tugmasini yopilgan smena uchun yoqish
+        if status != "Open" and payments:
+            self.z_print_btn.setEnabled(True)
 
         self.user_lbl.setText(user.split("@")[0] if "@" in user else user)
         self.date_lbl.setText(f"📅 {date}  ⏱ {time_str}")
@@ -371,6 +501,33 @@ class ShiftDetailDialog(QDialog):
             l.addWidget(msg)
             self.content_layout.addWidget(card)
 
+    def _z_print(self):
+        """Z-otchyotni serverdan olib printerga chop etish."""
+        self.z_print_btn.setEnabled(False)
+        self.z_print_btn.setText("⏳  Yuklanmoqda...")
+        self._z_worker = FetchZReportDataWorker(self.api, self.opening_name)
+        self._z_worker.result_ready.connect(self._on_z_data_ready)
+        self._z_worker.start()
+
+    def _on_z_data_ready(self, success: bool, report_data: dict):
+        self.z_print_btn.setEnabled(True)
+        self.z_print_btn.setText("🖨  Z-Chop etish")
+        if not success:
+            QMessageBox.warning(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.")
+            return
+        try:
+            from core.printer import print_z_report
+            ok = print_z_report(report_data)
+            if ok:
+                QMessageBox.information(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!")
+            else:
+                QMessageBox.warning(
+                    self, "Printer",
+                    "Printer sozlanmagan yoki ulanmagan.\nPrinter guide ni tekshiring."
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Xatolik", f"Chop etishda xatolik:\n{e}")
+
 
 class PosShiftsWindow(QWidget):
     """Inline panel — filialga tegishli POS Opening Entry lar ro'yxati."""
@@ -430,8 +587,8 @@ class PosShiftsWindow(QWidget):
         layout.addWidget(sep)
 
         # Table
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Kassir", "Sana", "Vaqt", "Holat"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["ID", "Kassir", "Sana", "Vaqt", "Holat", "Z-Otchyot"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
@@ -454,9 +611,16 @@ class PosShiftsWindow(QWidget):
 
         hdr = self.table.horizontalHeader()
         hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(5, s(120))
 
         layout.addWidget(self.table)
+        _touch_scroll(self.table)
 
 
     def load_shifts(self):
@@ -473,7 +637,9 @@ class PosShiftsWindow(QWidget):
             self.table.insertRow(i)
             self.table.setRowHeight(i, s(50))
 
-            id_item = QTableWidgetItem(item.get("name", ""))
+            opening_name = item.get("name", "")
+
+            id_item = QTableWidgetItem(opening_name)
             id_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 0, id_item)
 
@@ -497,10 +663,69 @@ class PosShiftsWindow(QWidget):
                 status_item.setForeground(Qt.GlobalColor.darkGreen)
             else:
                 status_item.setForeground(Qt.GlobalColor.darkGray)
-
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             self.table.setItem(i, 4, status_item)
+
+            # Z-Chop tugmasi (faqat yopilgan smena uchun)
+            if status != "Open":
+                z_btn = QPushButton("🖨 Z-Chop")
+                z_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: #eff6ff; color: #1d4ed8;
+                        font-weight: 600; font-size: {font(12)}px;
+                        border-radius: {s(6)}px; border: 1px solid #bfdbfe;
+                        padding: {s(4)}px {s(8)}px;
+                    }}
+                    QPushButton:hover {{ background: #dbeafe; }}
+                    QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }}
+                """)
+                z_btn.clicked.connect(
+                    lambda _, nm=opening_name, b=z_btn: self._reprint_z(nm, b)
+                )
+                self.table.setCellWidget(i, 5, z_btn)
+            else:
+                lbl = QLabel("—")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setStyleSheet(f"color: #94a3b8; font-size: {font(12)}px;")
+                self.table.setCellWidget(i, 5, lbl)
 
     def _show_details(self, item):
         opening_name = self.table.item(item.row(), 0).text()
         ShiftDetailDialog(self, self.api, opening_name).exec()
+
+    def _reprint_z(self, opening_name: str, btn: QPushButton):
+        btn.setEnabled(False)
+        btn.setText("⏳...")
+        worker = FetchZReportDataWorker(self.api, opening_name)
+        worker.result_ready.connect(lambda ok, data, b=btn: self._on_z_ready(ok, data, b))
+        # Worker ni saqlash (GC dan himoya)
+        if not hasattr(self, '_z_workers'):
+            self._z_workers = []
+        self._z_workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._z_workers.remove(w) if w in self._z_workers else None)
+        worker.start()
+
+    def _on_z_ready(self, success: bool, report_data: dict, btn: QPushButton):
+        try:
+            btn.setEnabled(True)
+            btn.setText("🖨 Z-Chop")
+        except RuntimeError:
+            pass
+
+        if not success:
+            QMessageBox.warning(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.")
+            return
+
+        try:
+            from core.printer import print_z_report
+            ok = print_z_report(report_data)
+            if ok:
+                QMessageBox.information(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!")
+            else:
+                QMessageBox.warning(
+                    self, "Printer",
+                    "Printer sozlanmagan yoki ulanmagan.\n"
+                    "POS Profile da printerni sozlang."
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "Xatolik", f"Chop etishda xatolik:\n{e}")

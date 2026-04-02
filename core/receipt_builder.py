@@ -286,3 +286,137 @@ def build_test_receipt(printer_name: str = "Test") -> bytes:
 def build_cash_drawer_command() -> bytes:
     """Cash drawer ochish buyrug'i."""
     return CMD_INIT + CMD_OPEN_DRAWER
+
+
+
+# ──────────────────────────────────────────────────
+#  Z-Otchyot (Smena hisoboti)
+# ──────────────────────────────────────────────────
+def build_z_report_receipt(report_data: dict) -> bytes:
+    """Smena yopilish Z-otchyoti cheki.
+
+    report_data kalitlari:
+      terminal_name  — restoran/filial nomi
+      shift_id       — POS Opening Entry nomi
+      cashier        — kassir ismi
+      opened_at      — smena ochilgan vaqt (str)
+      closed_at      — smena yopilgan vaqt (str)
+      payments       — list of {mode_of_payment, expected_amount, closing_amount}
+      total_invoices — jami cheklar soni
+      total_sales    — jami sotuv summasi
+      expected_cash  — kassada bo'lishi kerak (kassirga yashirilgan)
+      actual_cash    — kassir sanagan haqiqiy naqd pul
+      cash_diff      — farq (actual - expected)
+    """
+    terminal = report_data.get("terminal_name", "JAZIRA POS")
+    shift_id = report_data.get("shift_id", "—")
+    cashier = report_data.get("cashier", "—")
+    opened_at = report_data.get("opened_at", "—")
+    closed_at = report_data.get("closed_at", "—")
+    payments = report_data.get("payments", [])
+    total_invoices = report_data.get("total_invoices", 0)
+    total_sales = float(report_data.get("total_sales", 0))
+    expected_cash = float(report_data.get("expected_cash", 0))
+    actual_cash = float(report_data.get("actual_cash", 0))
+    cash_diff = float(report_data.get("cash_diff", 0))
+
+    data = bytearray()
+    data += CMD_INIT
+
+    # ── Sarlavha ───────────────────────────────────
+    data += CMD_ALIGN_CENTER
+    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+    data += _encode(terminal[:CHARS_DOUBLE] + "\n")
+    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
+    data += _encode("Z-OTCHYOT\n")
+    data += CMD_ALIGN_LEFT
+    data += _separator("=")
+
+    # ── Smena ma'lumotlari ─────────────────────────
+    data += _line("Smena:", shift_id[-20:])
+    data += _line("Kassir:", cashier)
+    data += _line("Ochildi:", opened_at)
+    data += _line("Yopildi:", closed_at)
+    data += _line("Jami cheklar:", str(total_invoices))
+    data += _separator("=")
+
+    # ── To'lov turlari bo'yicha tushum ────────────
+    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
+    data += _encode("TO'LOV TURLARI\n")
+    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
+    data += _separator("-")
+
+    _CASH_KEYS = {"cash", "naqd", "naqd pul"}
+
+    for p in payments:
+        mop = p.get("mode_of_payment", "")
+        expected = float(p.get("expected_amount", 0))
+        is_cash = mop.lower().strip() in _CASH_KEYS
+
+        data += CMD_BOLD_ON
+        data += _encode(f"{mop}:\n")
+        data += CMD_BOLD_OFF
+        data += _line("  Sotuv:", f"{_format_amount(expected)} UZS")
+        if is_cash:
+            data += _line("  Qaytarish:", "0 UZS")
+
+    data += _separator("-")
+    data += CMD_BOLD_ON
+    data += _line("JAMI SOTUV:", f"{_format_amount(total_sales)} UZS")
+    data += CMD_BOLD_OFF
+    data += _separator("=")
+
+    # ── Nazorat sanog'i ────────────────────────────
+    # Kassirga ekranda KO'RSATILMAGAN, lekin chekda TO'LIQ chiqadi
+    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
+    data += _encode("NAZORAT SANOG'I\n")
+    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
+    data += _separator("-")
+
+    data += _line("Kassada bo'lishi kerak:", f"{_format_amount(expected_cash)} UZS")
+    data += _separator("-")
+    data += CMD_BOLD_ON
+    data += _line("Kassir sanagan summa:", f"{_format_amount(actual_cash)} UZS")
+    data += CMD_BOLD_OFF
+    data += _separator("-")
+
+    if abs(cash_diff) < 1:
+        data += CMD_BOLD_ON
+        data += _line("Farq:", "0 UZS  OK")
+        data += CMD_BOLD_OFF
+    elif cash_diff < 0:
+        # Kamomad — kassir kam topshirdi
+        data += CMD_BOLD_ON
+        data += _line("KAMOMAD:", f"-{_format_amount(abs(cash_diff))} UZS !")
+        data += CMD_BOLD_OFF
+    else:
+        # Ortiqcha — kassir ko'p topshirdi
+        data += _line("Ortiqcha:", f"+{_format_amount(cash_diff)} UZS")
+
+    data += _separator("=")
+
+    # ── Naqd pul yechish ──────────────────────────
+    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
+    data += _encode("NAQD PUL YECHISH\n")
+    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
+    data += _separator("-")
+    data += _line("Tur:", "Smena yopilishi")
+    data += CMD_BOLD_ON
+    data += _line("Summa:", f"{_format_amount(actual_cash)} UZS")
+    data += CMD_BOLD_OFF
+    data += _line("Kassir:", cashier)
+    data += _separator("=")
+
+    # ── Yakuniy xabar ──────────────────────────────
+    data += CMD_ALIGN_CENTER
+    data += CMD_BOLD_ON
+    data += _encode("Smena muvaffaqiyatli\n")
+    data += _encode("yopildi!\n")
+    data += CMD_BOLD_OFF
+    data += _encode(closed_at + "\n")
+    data += CMD_ALIGN_LEFT
+
+    data += CMD_FEED
+    data += CMD_CUT
+
+    return bytes(data)

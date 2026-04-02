@@ -89,10 +89,61 @@ def clear_credentials():
             logger.info(".env fayli o'chirildi (logout)")
         except Exception as e:
             logger.error(".env faylini o'chirishda xatolik: %s", e)
-    
+
     os.environ.pop("FRAPPE_URL", None)
     os.environ.pop("FRAPPE_USER", None)
     os.environ.pop("FRAPPE_PASSWORD", None)
     os.environ.pop("FRAPPE_SITE", None)
     os.environ.pop("FRAPPE_API_KEY", None)
     os.environ.pop("FRAPPE_API_SECRET", None)
+
+
+# ── PIN autentifikatsiya ──────────────────────────────
+import hashlib
+
+
+def _pin_hash(pin: str) -> str:
+    return hashlib.sha256(pin.encode()).hexdigest()
+
+
+def save_pin(pin: str):
+    save_config({"pin_hash": _pin_hash(pin)})
+
+
+def verify_pin(pin: str) -> bool:
+    stored = load_config().get("pin_hash", "")
+    return bool(stored) and _pin_hash(pin) == stored
+
+
+def has_pin() -> bool:
+    return bool(load_config().get("pin_hash"))
+
+
+def has_saved_credentials() -> bool:
+    cfg = load_config()
+    return bool(cfg.get("user")) and bool(cfg.get("password")) and bool(cfg.get("url"))
+
+
+# ── Ko'p kassir boshqaruvi ────────────────────────────
+
+def get_cashiers() -> list:
+    return load_config().get("cashiers", [])
+
+
+def save_cashier(name: str, pin: str):
+    """Kassirni qo'shish yoki PIN ni yangilash."""
+    cashiers = [c for c in get_cashiers() if c.get("name", "").lower() != name.lower()]
+    cashiers.append({"name": name, "pin_hash": _pin_hash(pin)})
+    save_config({"cashiers": cashiers})
+
+
+def delete_cashier(name: str):
+    cashiers = [c for c in get_cashiers() if c.get("name", "").lower() != name.lower()]
+    save_config({"cashiers": cashiers})
+
+
+def verify_cashier_pin(name: str, pin: str) -> bool:
+    for c in get_cashiers():
+        if c.get("name", "").lower() == name.lower():
+            return _pin_hash(pin) == c.get("pin_hash", "")
+    return False
