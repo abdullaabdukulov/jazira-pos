@@ -1,8 +1,14 @@
 import logging
 import os
+import sys
 from logging.handlers import RotatingFileHandler
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# PyInstaller frozen rejimda exe papkasini ishlatish
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -28,10 +34,12 @@ def get_logger(name: str) -> logging.Logger:
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    # Console handler (faqat stderr mavjud bo'lganda)
+    if sys.stderr is not None:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger
+

@@ -3,7 +3,17 @@ import os
 import signal
 import traceback
 import faulthandler
-faulthandler.enable()
+
+# PyInstaller --windowed rejimda stderr/stdout None bo'ladi
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+
+try:
+    faulthandler.enable()
+except Exception:
+    pass
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

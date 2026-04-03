@@ -1,14 +1,21 @@
 import json
 import os
+import sys
 import threading
 from dotenv import load_dotenv
 from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# PyInstaller frozen rejimda exe papkasini ishlatish
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 ENV_FILE = os.path.join(BASE_DIR, ".env")
+
 
 _config_lock = threading.Lock()
 
