@@ -183,8 +183,9 @@ class SyncWorker(QThread):
         """Serverdan printer konfiguratsiyasini sinxronizatsiya qilish.
 
         Bitta API chaqiruv orqali:
-        - QZ Tray sozlamalari (qz_print, qz_host, customer_qz_printer)
-        - Production unitlar (har biri qz_printer_name va item_groups bilan)
+        - print_enabled (chop etish yoqilganmi)
+        - customer_printer (mijoz cheki printeri device nomi)
+        - Production unitlar (har biri printer_name va item_groups bilan)
         """
         config = load_config()
         pos_profile = config.get("pos_profile")
@@ -203,14 +204,19 @@ class SyncWorker(QThread):
             logger.warning("Printer konfiguratsiyasini olib bo'lmadi")
             return
 
-        # QZ Tray sozlamalarini config ga saqlash
         printer_config = {
-            "qz_print": result.get("qz_print", 0),
-            "qz_host": result.get("qz_host", "localhost"),
-            "customer_qz_printer": result.get("customer_qz_printer", ""),
+            "print_enabled": result.get("print_enabled", 0),
+            "customer_printer": result.get("customer_printer", ""),
             "production_units": result.get("production_units", []),
         }
 
         save_config(printer_config)
         units_count = len(printer_config["production_units"])
-        logger.info("Printer config sinxronizatsiya qilindi: %d ta production unit", units_count)
+        logger.info(
+            "Printer config sinxronizatsiya qilindi: %d ta production unit, "
+            "print_enabled=%s, customer_printer='%s'",
+            units_count,
+            printer_config["print_enabled"],
+            printer_config["customer_printer"],
+        )
+

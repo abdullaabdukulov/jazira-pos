@@ -1,30 +1,23 @@
 {
-    "_comment": "Bu fayl namuna. Haqiqiy config.json ga nusxa olib, printer sozlamalarini to'g'rilang.",
-    "_note": "pos_profile, company, cashier, currency, production_units kabi sozlamalar sinxronizatsiya vaqtida serverdan avtomatik olinadi.",
+    "_comment": "Bu fayl namuna. Haqiqiy sozlamalar sinxronizatsiya vaqtida serverdan avtomatik olinadi.",
+    "_note": "POS Profile dagi 'QZ Print' checkbox — print_enabled, 'Customer QZ Printer Name' — customer_printer sifatida ishlatiladi.",
 
-    "printers": [
-        {
-            "_comment": "Mijozga beriladigan chek printeri",
-            "name": "Mijoz",
-            "type": "customer",
-            "device": "/dev/usb/lp0",
-            "win_name": "XP-365B"
-        }
-    ],
+    "_printer_setup": "Printer sozlash: POS Profile → QZ Print = ✓, Customer QZ Printer Name = 'XP-365B' (Windows printer nomi yoki Linux printer nomi)",
 
-    "_production_units_comment": "production_units sinxronizatsiya vaqtida serverdan olinadi. Faqat printer sozlamalarini qo'lda sozlash kerak: Linux → printer_device, Windows → printer_win_name",
+    "print_enabled": 1,
+    "customer_printer": "XP-365B",
+
+    "_production_units_comment": "Production unitlar serverdan sinxronizatsiya qilinadi. Har bir unitning printer_name maydoniga printer device nomini yozing.",
     "production_units": [
         {
             "name": "Oshxona",
-            "item_groups": ["Oshpaz mahsulotlari"],
-            "printer_device": "/dev/usb/lp1",
-            "printer_win_name": "Kitchen Printer"
+            "printer_name": "Kitchen-Printer",
+            "item_groups": ["Oshpaz mahsulotlari"]
         },
         {
-            "name": "Koffe",
-            "item_groups": ["Koffe"],
-            "printer_device": "/dev/usb/lp2",
-            "printer_win_name": "Bar Printer"
+            "name": "Bar",
+            "printer_name": "Bar-Printer",
+            "item_groups": ["Ichimliklar"]
         }
     ]
 }

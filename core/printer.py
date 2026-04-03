@@ -1,10 +1,11 @@
 """To'g'ridan-to'g'ri USB printer orqali ESC/POS chop etish.
 
 OS printer API orqali raw baytlarni printerga yuboradi:
-- Windows: win32print (pywin32)
+- Windows: win32print (pywin32) — printer device name orqali
 - Linux: lp buyrug'i (subprocess)
 
 QZ Tray, WebSocket, sertifikat — hech biri kerak emas.
+Faqat printer device nomi yetarli.
 """
 
 import platform
@@ -100,16 +101,21 @@ def _send_raw_linux(printer_name: str, data: bytes) -> bool:
 
 
 # ──────────────────────────────────────────────────
-#  Config
+#  Config — QZ Tray yo'q, faqat printer device name
 # ──────────────────────────────────────────────────
 def _get_printer_config() -> dict:
     config = load_config()
     return {
-        "qz_print": config.get("qz_print", 0),
-        "customer_printer": config.get("customer_qz_printer", ""),
+        "print_enabled": config.get("print_enabled", 0),
+        "customer_printer": config.get("customer_printer", ""),
         "production_units": config.get("production_units", []),
         "company": config.get("company", ""),
     }
+
+
+def _is_printing_enabled() -> bool:
+    """Chop etish yoqilganmi tekshirish."""
+    return bool(_get_printer_config().get("print_enabled", 0))
 
 
 # ──────────────────────────────────────────────────
@@ -126,7 +132,14 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
     results = {}
     cfg = _get_printer_config()
 
-    if not cfg.get("qz_print", 0):
+    logger.info(
+        "print_receipt: print_enabled=%s, customer_printer='%s', units=%d",
+        cfg.get("print_enabled"), cfg.get("customer_printer"),
+        len(cfg.get("production_units", []))
+    )
+
+    if not cfg.get("print_enabled", 0):
+        logger.warning("Printer yoqilmagan (print_enabled=0) — chop etish o'tkazib yuborildi")
         return results
 
     # 1. Mijoz cheki
@@ -151,7 +164,7 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
 
     for unit in prod_units:
         unit_name = unit.get("name", "")
-        unit_printer = unit.get("qz_printer_name", "")
+        unit_printer = unit.get("printer_name", "")
 
         if not unit_printer:
             continue
@@ -180,7 +193,7 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
 def open_cash_drawer() -> bool:
     """Cash drawer ochish (mijoz printeri orqali)."""
     cfg = _get_printer_config()
-    if not cfg.get("qz_print", 0):
+    if not cfg.get("print_enabled", 0):
         return False
     customer_printer = cfg["customer_printer"]
     if not customer_printer:
@@ -196,7 +209,7 @@ def reprint_receipt(order_data: dict, payments_list: list) -> bool:
 def reprint_customer(order_data: dict, payments_list: list) -> bool:
     """Faqat mijoz chekini qayta chop etish."""
     cfg = _get_printer_config()
-    if not cfg.get("qz_print", 0):
+    if not cfg.get("print_enabled", 0):
         return False
     customer_printer = cfg["customer_printer"]
     if not customer_printer:
@@ -218,7 +231,7 @@ def reprint_production(order_data: dict, items_list: list = None) -> dict:
     """
     results = {}
     cfg = _get_printer_config()
-    if not cfg.get("qz_print", 0):
+    if not cfg.get("print_enabled", 0):
         return results
 
     prod_units = cfg["production_units"]
@@ -232,7 +245,7 @@ def reprint_production(order_data: dict, items_list: list = None) -> dict:
 
     for unit in prod_units:
         unit_name = unit.get("name", "")
-        unit_printer = unit.get("qz_printer_name", "")
+        unit_printer = unit.get("printer_name", "")
         if not unit_printer:
             continue
         unit_item_groups = set(unit.get("item_groups", []))
@@ -266,7 +279,7 @@ def reprint_all(order_data: dict, payments_list: list) -> dict:
 def print_z_report(report_data: dict) -> bool:
     """Z-otchyot (smena hisoboti) ni mijoz printeriga chop etish."""
     cfg = _get_printer_config()
-    if not cfg.get("qz_print", 0):
+    if not cfg.get("print_enabled", 0):
         logger.info("Printer yoqilmagan — Z-report chop etilmadi")
         return False
     customer_printer = cfg["customer_printer"]
