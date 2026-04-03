@@ -1,3 +1,5 @@
+build/
+dist/
 pos_data.db
 config.json
 .env

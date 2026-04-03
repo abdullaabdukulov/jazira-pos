@@ -1,7 +1,7 @@
-"""ESC/POS chek ma'lumotlarini yaratish — faqat baytlar, I/O yo'q.
+"""TSPL (Stiker) formatida chek ma'lumotlarini yaratish.
 
-Bu modul printer.py dan ajratilgan: chek formatini tayyorlaydi,
-lekin printerga yuborish boshqa modulda (printer.py).
+Printer stiker (TSPL) rejimida turgani uchun kod ESC/POS o'rniga 
+avtomatik tarzda TSPL buyruqlarini yaratadi. (Rus harflari uchun CP1251 va Font 3)
 """
 
 from datetime import datetime
@@ -10,28 +10,6 @@ from core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ──────────────────────────────────────────────────
-#  ESC/POS buyruqlari
-# ──────────────────────────────────────────────────
-ESC = b'\x1b'
-GS = b'\x1d'
-
-CMD_INIT = ESC + b'\x40'
-CMD_ALIGN_CENTER = ESC + b'\x61\x01'
-CMD_ALIGN_LEFT = ESC + b'\x61\x00'
-CMD_BOLD_ON = ESC + b'\x45\x01'
-CMD_BOLD_OFF = ESC + b'\x45\x00'
-CMD_DOUBLE_ON = GS + b'\x21\x11'
-CMD_DOUBLE_OFF = GS + b'\x21\x00'
-CMD_FONT_B = ESC + b'\x4d\x01'
-CMD_FONT_A = ESC + b'\x4d\x00'
-CMD_CUT = GS + b'\x56\x41\x03'
-CMD_FEED = ESC + b'\x64\x04'
-CMD_OPEN_DRAWER = ESC + b'\x70\x00\x19\xfa'
-
-CHARS_PER_LINE = 48
-CHARS_DOUBLE = 24
-
 ORDER_TYPE_LABELS = {
     "Shu yerda": "Xarid cheki",
     "Saboy": "Olib ketish cheki",
@@ -39,47 +17,81 @@ ORDER_TYPE_LABELS = {
     "Dastavka Saboy": "Dastavka cheki",
 }
 
+# ──────────────────────────────────────────────────
+#  TSPL Formatlash Dvigateli (Helper Class)
+# ──────────────────────────────────────────────────
+class TSPLReceipt:
+    def __init__(self, width_mm=58):
+        self.width_dots = 450  # 58mm qog'oz uchun kenglik
+        self.data = bytearray()
+        self.y = 10
+        self.lines = []
+
+    def add_text(self, text, x=10, font="3", step=35):
+        """Oddiy matn qo'shish (Standart 3-shrift rus harflarini qo'llaydi)"""
+        safe_text = str(text).replace('"', "'")
+        self.lines.append(f'TEXT {x},{self.y},"{font}",0,1,1,"{safe_text}"\r\n')
+        self.y += step
+
+    def add_center(self, text, font="3", step=35):
+        """O'rtaga to'g'irlab matn qo'shish"""
+        safe_text = str(text).replace('"', "'")
+        char_width = 16 if font == "3" else (24 if font == "4" else 12)
+        text_width = len(safe_text) * char_width
+        x = max(10, (self.width_dots - text_width) // 2)
+        self.add_text(safe_text, x=x, font=font, step=step)
+
+    def add_line(self, left, right, font="3", step=35):
+        """Chap va o'ng tomonga ajratilgan qator (Nomi --- Summa)"""
+        safe_left = str(left).replace('"', "'")
+        safe_right = str(right).replace('"', "'")
+        max_chars = 26 if font == "3" else 32  # 3-shrift uchun qator sig'imi
+        spaces = max_chars - len(safe_left) - len(safe_right)
+        if spaces < 1:
+            spaces = 1
+        combined = safe_left + " " * spaces + safe_right
+        self.add_text(combined, x=10, font=font, step=step)
+
+    def add_separator(self, char="-", step=35):
+        """Chiziq tortish"""
+        count = 26 if char == "-" else 14
+        self.add_text(char * count, x=10, font="3", step=step)
+
+    def build(self, is_continuous=True):
+        """Yig'ilgan ma'lumotlarni TSPL baytlariga aylantirish"""
+        height_mm = max(20, int((self.y + 40) / 8))
+        gap_cmd = "GAP 0 mm,0 mm" if is_continuous else "GAP 2 mm,0 mm"
+        
+        # CODEPAGE 1251 - Xprinter uchun eng yaxshi Krill (Rus) kodirovkasi
+        header = (
+            f"SIZE 58 mm,{height_mm} mm\r\n"
+            f"{gap_cmd}\r\n"
+            f"DIRECTION 1\r\n"
+            f"CODEPAGE 1251\r\n" 
+            f"CLS\r\n"
+        )
+        
+        body = bytearray()
+        
+        # Baytga aylantirishda CP1251 ishlatamiz
+        body += header.encode('cp1251', errors='replace')
+        for line in self.lines:
+            body += line.encode('cp1251', errors='replace')
+            
+        footer = b"PRINT 1\r\n"
+        return bytes(body + footer)
+
 
 # ──────────────────────────────────────────────────
-#  Matn formatlash
+#  Yordamchi funksiyalar
 # ──────────────────────────────────────────────────
-def _encode(text: str) -> bytes:
-    try:
-        return text.encode("cp866")
-    except UnicodeEncodeError:
-        return text.encode("utf-8", errors="replace")
-
-
-def _line(left: str, right: str = "", fill: str = " ", width: int = CHARS_PER_LINE) -> bytes:
-    if not right:
-        return _encode(left[:width] + "\n")
-    space = width - len(left) - len(right)
-    if space < 1:
-        space = 1
-    return _encode(left + fill * space + right + "\n")
-
-
-def _center_text(text: str) -> bytes:
-    return CMD_ALIGN_CENTER + _encode(text + "\n") + CMD_ALIGN_LEFT
-
-
-def _separator(char: str = "-", width: int = CHARS_PER_LINE) -> bytes:
-    return _encode(char * width + "\n")
-
-
 def _format_amount(amount) -> str:
     return f"{float(amount):,.0f}"
-
 
 def _order_type_label(order_type: str) -> str:
     return ORDER_TYPE_LABELS.get(order_type, "Chek")
 
-
-# ──────────────────────────────────────────────────
-#  Item groups mapping (lokal DB)
-# ──────────────────────────────────────────────────
 def get_item_groups_map(items: list) -> dict:
-    """Lokal DB dan itemlarning item_group ini oladi."""
     item_codes = [
         item.get("item_code", item.get("item", ""))
         for item in items
@@ -87,7 +99,6 @@ def get_item_groups_map(items: list) -> dict:
     ]
     if not item_codes:
         return {}
-
     try:
         rows = Item.select(Item.item_code, Item.item_group).where(
             Item.item_code.in_(item_codes)
@@ -99,324 +110,183 @@ def get_item_groups_map(items: list) -> dict:
 
 
 # ──────────────────────────────────────────────────
-#  Chek yaratish
+#  Chek Yaratish (TSPL formatida)
 # ──────────────────────────────────────────────────
 def build_customer_receipt(order_data: dict, payments_list: list, config: dict) -> bytes:
-    """Mijoz uchun to'liq chek — turiga qarab sarlavha o'zgaradi."""
+    """Mijoz uchun TSPL (Stiker) cheki"""
+    r = TSPLReceipt()
+    
+    company = config.get("company", "JAZIRA POS")
+    r.add_center(company, font="4", step=45)
+    
+    order_type = order_data.get("order_type", "")
+    r.add_center(_order_type_label(order_type), font="3")
+    r.add_center(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+    
+    customer = order_data.get("customer", "")
+    if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
+        r.add_separator("-")
+        r.add_text(f"Mijoz: {customer}")
+        
+    ticket_number = order_data.get("ticket_number", "")
+    if ticket_number:
+        r.add_separator("=")
+        r.add_center(f"STIKER: {ticket_number}", font="4", step=45)
+        r.add_separator("=")
+        
+    r.add_line("Nomi", "Soni Summa")
+    r.add_separator("-")
+    
     items_list = order_data.get("items", [])
     total_amount = order_data.get("total_amount", 0.0)
-    order_type = order_data.get("order_type", "")
-    ticket_number = order_data.get("ticket_number", "")
-    comment = order_data.get("comment", "")
-    customer = order_data.get("customer", "")
-
-    company = config.get("company", "JAZIRA POS")
-
-    total_paid = sum(float(p.get("amount", 0)) for p in payments_list)
-    change = max(0, total_paid - total_amount)
-    date_str = datetime.now().strftime("%Y-%m-%d  %H:%M:%S")
-
-    data = bytearray()
-    data += CMD_INIT
-
-    # Sarlavha
-    data += CMD_ALIGN_CENTER
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode(company + "\n")
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode(_order_type_label(order_type) + "\n")
-    data += _encode(date_str + "\n")
-    data += CMD_ALIGN_LEFT
-
-    # Dastavka → mijoz nomi
-    if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
-        data += _separator()
-        data += CMD_BOLD_ON
-        data += _line("Mijoz:", customer)
-        data += CMD_BOLD_OFF
-
-    # Stiker raqami
-    if ticket_number:
-        data += _encode("\n")
-        data += _separator("=")
-        data += CMD_ALIGN_CENTER + CMD_BOLD_ON + CMD_DOUBLE_ON
-        data += _encode(f"STIKER: {ticket_number}\n")
-        data += CMD_DOUBLE_OFF + CMD_BOLD_OFF + CMD_ALIGN_LEFT
-        data += _separator("=")
-
-    # Tovarlar
-    data += _encode("\n")
-    data += CMD_BOLD_ON
-    data += _line("Nomi", "Soni   Summa")
-    data += CMD_BOLD_OFF
-    data += _separator()
-
+    
     for item in items_list:
         name = item.get("name", item.get("item_name", ""))
         qty = int(item.get("qty", 0))
         price = float(item.get("price", item.get("rate", 0)))
-        line_total = qty * price
-        qty_str = str(qty)
-        total_str = _format_amount(line_total)
-        right_part = f"{qty_str:>4}  {total_str:>10}"
-
-        if len(name) + len(right_part) + 1 > CHARS_PER_LINE:
-            data += _encode(name[:CHARS_PER_LINE] + "\n")
-            data += _encode(right_part.rjust(CHARS_PER_LINE) + "\n")
+        right_part = f"{qty}  {_format_amount(qty * price)}"
+        
+        # 3-shrift sig'imiga qarab qatorni ajratish
+        if len(name) + len(right_part) > 25:
+            r.add_text(name[:25])
+            r.add_line("", right_part)
         else:
-            data += _line(name, right_part)
-
-    # Jami
-    data += _separator("=")
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _line("JAMI:", f"{_format_amount(total_amount)} UZS", width=CHARS_DOUBLE)
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _separator("=")
-
-    # To'lovlar
-    data += _encode("\n")
-    data += CMD_BOLD_ON
-    data += _encode("TO'LOVLAR:\n")
-    data += CMD_BOLD_OFF
+            r.add_line(name, right_part)
+            
+    r.add_separator("=")
+    r.add_line("JAMI:", f"{_format_amount(total_amount)} UZS", font="3", step=40)
+    r.add_separator("=")
+    
+    r.add_text("TO'LOVLAR:")
     for p in payments_list:
         if float(p.get("amount", 0)) > 0:
-            data += _line(f"  {p['mode_of_payment']}:", f"{_format_amount(p['amount'])} UZS")
-
-    # Qaytim
+            r.add_line(f"  {p['mode_of_payment']}:", f"{_format_amount(p['amount'])} UZS")
+            
+    total_paid = sum(float(p.get("amount", 0)) for p in payments_list)
+    change = max(0, total_paid - total_amount)
     if change > 0:
-        data += _separator()
-        data += CMD_BOLD_ON
-        data += _line("QAYTIM:", f"{_format_amount(change)} UZS")
-        data += CMD_BOLD_OFF
-
-    # Izoh
+        r.add_separator("-")
+        r.add_line("QAYTIM:", f"{_format_amount(change)} UZS")
+        
+    comment = order_data.get("comment", "")
     if comment:
-        data += _encode(f"\nIzoh: {comment}\n")
-
-    # Pastki qism
-    data += _encode("\n")
-    data += _center_text("Xaridingiz uchun rahmat!")
-    data += CMD_FEED
-    data += CMD_CUT
-
-    return bytes(data)
+        r.add_text(f"Izoh: {comment}")
+        
+    r.add_center("Xaridingiz uchun rahmat!", step=40)
+    
+    return r.build(is_continuous=True)
 
 
 def build_production_receipt(order_data: dict, unit_items: list, unit_name: str) -> bytes:
-    """Production unit uchun chek — turiga qarab format o'zgaradi."""
+    """Oshxona/Bar uchun stiker"""
+    r = TSPLReceipt()
+    r.add_center(f"--- {unit_name} ---", font="3", step=40)
+    
     order_type = order_data.get("order_type", "")
+    r.add_center(order_type, font="3", step=40)
+    r.add_center(datetime.now().strftime("%H:%M:%S"))
+    
     ticket_number = order_data.get("ticket_number", "")
-    comment = order_data.get("comment", "")
-    customer = order_data.get("customer", "")
-    date_str = datetime.now().strftime("%H:%M:%S")
-
-    data = bytearray()
-    data += CMD_INIT
-
-    # Sarlavha
-    data += CMD_ALIGN_CENTER + CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode(f"--- {unit_name} ---\n")
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-
-    # Buyurtma turi + vaqt
-    data += CMD_ALIGN_CENTER
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode(f"{order_type}\n")
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode(date_str + "\n")
-
-    # Stiker
     if ticket_number:
-        data += _encode("\n")
-        data += CMD_BOLD_ON + CMD_DOUBLE_ON
-        data += _encode(f"# {ticket_number}\n")
-        data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-
-    # Dastavka → mijoz nomi
+        r.add_center(f"# {ticket_number}", font="4", step=45)
+        
+    customer = order_data.get("customer", "")
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
-        data += CMD_BOLD_ON
-        data += _encode(f"Mijoz: {customer}\n")
-        data += CMD_BOLD_OFF
-
-    data += CMD_ALIGN_LEFT
-    data += _separator("=")
-
-    # Tovarlar — katta shrift
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
+        r.add_text(f"Mijoz: {customer}", font="3", step=40)
+        
+    r.add_separator("=")
+    
     for item in unit_items:
         name = item.get("name", item.get("item_name", ""))
         qty = int(item.get("qty", 0))
-        right = f"x{qty}"
-        if len(name) + len(right) + 1 > CHARS_DOUBLE:
-            name = name[:CHARS_DOUBLE - len(right) - 1]
-        data += _line(name, right, width=CHARS_DOUBLE)
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-
-    data += _separator("=")
-
-    # Izoh
+        r.add_line(name[:20], f"x{qty}", font="3", step=40)
+        
+    r.add_separator("=")
+    
+    comment = order_data.get("comment", "")
     if comment:
-        data += CMD_BOLD_ON
-        data += _encode(f"IZOH: {comment}\n")
-        data += CMD_BOLD_OFF
-
-    data += CMD_FEED
-    data += CMD_CUT
-
-    return bytes(data)
+        r.add_text(f"IZOH: {comment}", font="3", step=40)
+        
+    return r.build(is_continuous=True)
 
 
 def build_test_receipt(printer_name: str = "Test") -> bytes:
-    """Sinov cheki."""
-    data = bytearray()
-    data += CMD_INIT
-    data += CMD_ALIGN_CENTER
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode("SINOV CHEKI\n")
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode(f"Printer: {printer_name}\n")
-    data += _encode(datetime.now().strftime("%Y-%m-%d  %H:%M:%S") + "\n")
-    data += _separator()
-    data += _center_text("Printer ishlayapti!")
-    data += CMD_FEED
-    data += CMD_CUT
-    return bytes(data)
+    """Sinov cheki (TSPL)"""
+    r = TSPLReceipt()
+    r.add_center("SINOV CHEKI", font="4", step=50)
+    r.add_center(f"Printer: {printer_name}", font="3")
+    r.add_center(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+    r.add_separator("=")
+    r.add_center("Stiker rejimida ulandi!", font="3")
+    return r.build(is_continuous=True)
 
 
 def build_cash_drawer_command() -> bytes:
-    """Cash drawer ochish buyrug'i."""
-    return CMD_INIT + CMD_OPEN_DRAWER
+    """Kassa tortmasini ochish buyrug'i"""
+    return b'\x1b\x70\x00\x19\xfa'
 
 
-
-# ──────────────────────────────────────────────────
-#  Z-Otchyot (Smena hisoboti)
-# ──────────────────────────────────────────────────
 def build_z_report_receipt(report_data: dict) -> bytes:
-    """Smena yopilish Z-otchyoti cheki.
-
-    report_data kalitlari:
-      terminal_name  — restoran/filial nomi
-      shift_id       — POS Opening Entry nomi
-      cashier        — kassir ismi
-      opened_at      — smena ochilgan vaqt (str)
-      closed_at      — smena yopilgan vaqt (str)
-      payments       — list of {mode_of_payment, expected_amount, closing_amount}
-      total_invoices — jami cheklar soni
-      total_sales    — jami sotuv summasi
-      expected_cash  — kassada bo'lishi kerak (kassirga yashirilgan)
-      actual_cash    — kassir sanagan haqiqiy naqd pul
-      cash_diff      — farq (actual - expected)
-    """
+    """Z-otchyot TSPL formatida"""
+    r = TSPLReceipt()
+    
     terminal = report_data.get("terminal_name", "JAZIRA POS")
-    shift_id = report_data.get("shift_id", "—")
-    cashier = report_data.get("cashier", "—")
-    opened_at = report_data.get("opened_at", "—")
-    closed_at = report_data.get("closed_at", "—")
-    payments = report_data.get("payments", [])
-    total_invoices = report_data.get("total_invoices", 0)
-    total_sales = float(report_data.get("total_sales", 0))
-    expected_cash = float(report_data.get("expected_cash", 0))
-    actual_cash = float(report_data.get("actual_cash", 0))
-    cash_diff = float(report_data.get("cash_diff", 0))
-
-    data = bytearray()
-    data += CMD_INIT
-
-    # ── Sarlavha ───────────────────────────────────
-    data += CMD_ALIGN_CENTER
-    data += CMD_BOLD_ON + CMD_DOUBLE_ON
-    data += _encode(terminal[:CHARS_DOUBLE] + "\n")
-    data += CMD_DOUBLE_OFF + CMD_BOLD_OFF
-    data += _encode("Z-OTCHYOT\n")
-    data += CMD_ALIGN_LEFT
-    data += _separator("=")
-
-    # ── Smena ma'lumotlari ─────────────────────────
-    data += _line("Smena:", shift_id[-20:])
-    data += _line("Kassir:", cashier)
-    data += _line("Ochildi:", opened_at)
-    data += _line("Yopildi:", closed_at)
-    data += _line("Jami cheklar:", str(total_invoices))
-    data += _separator("=")
-
-    # ── To'lov turlari bo'yicha tushum ────────────
-    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
-    data += _encode("TO'LOV TURLARI\n")
-    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
-    data += _separator("-")
-
+    r.add_center(terminal, font="3", step=40)
+    r.add_center("Z-OTCHYOT", font="4", step=45)
+    r.add_separator("=")
+    
+    r.add_line("Smena:", str(report_data.get("shift_id", "—"))[-20:])
+    r.add_line("Kassir:", report_data.get("cashier", "—"))
+    r.add_line("Ochildi:", report_data.get("opened_at", "—"))
+    r.add_line("Yopildi:", report_data.get("closed_at", "—"))
+    r.add_line("Cheklar:", str(report_data.get("total_invoices", 0)))
+    r.add_separator("=")
+    
+    r.add_center("TO'LOV TURLARI")
+    r.add_separator("-")
+    
     _CASH_KEYS = {"cash", "naqd", "naqd pul"}
-
-    for p in payments:
+    for p in report_data.get("payments", []):
         mop = p.get("mode_of_payment", "")
         expected = float(p.get("expected_amount", 0))
         is_cash = mop.lower().strip() in _CASH_KEYS
-
-        data += CMD_BOLD_ON
-        data += _encode(f"{mop}:\n")
-        data += CMD_BOLD_OFF
-        data += _line("  Sotuv:", f"{_format_amount(expected)} UZS")
+        
+        r.add_text(f"{mop}:")
+        r.add_line("  Sotuv:", f"{_format_amount(expected)} UZS")
         if is_cash:
-            data += _line("  Qaytarish:", "0 UZS")
-
-    data += _separator("-")
-    data += CMD_BOLD_ON
-    data += _line("JAMI SOTUV:", f"{_format_amount(total_sales)} UZS")
-    data += CMD_BOLD_OFF
-    data += _separator("=")
-
-    # ── Nazorat sanog'i ────────────────────────────
-    # Kassirga ekranda KO'RSATILMAGAN, lekin chekda TO'LIQ chiqadi
-    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
-    data += _encode("NAZORAT SANOG'I\n")
-    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
-    data += _separator("-")
-
-    data += _line("Kassada bo'lishi kerak:", f"{_format_amount(expected_cash)} UZS")
-    data += _separator("-")
-    data += CMD_BOLD_ON
-    data += _line("Kassir sanagan summa:", f"{_format_amount(actual_cash)} UZS")
-    data += CMD_BOLD_OFF
-    data += _separator("-")
-
+            r.add_line("  Qaytarish:", "0 UZS")
+            
+    r.add_separator("-")
+    r.add_line("SOTUV:", f"{_format_amount(report_data.get('total_sales', 0))} UZS")
+    r.add_separator("=")
+    
+    r.add_center("NAZORAT SANOG'I")
+    r.add_separator("-")
+    
+    expected_cash = float(report_data.get("expected_cash", 0))
+    actual_cash = float(report_data.get("actual_cash", 0))
+    cash_diff = float(report_data.get("cash_diff", 0))
+    
+    r.add_line("Kassada kerak:", f"{_format_amount(expected_cash)}")
+    r.add_line("Sanaldi:", f"{_format_amount(actual_cash)}")
+    r.add_separator("-")
+    
     if abs(cash_diff) < 1:
-        data += CMD_BOLD_ON
-        data += _line("Farq:", "0 UZS  OK")
-        data += CMD_BOLD_OFF
+        r.add_line("Farq:", "0  OK")
     elif cash_diff < 0:
-        # Kamomad — kassir kam topshirdi
-        data += CMD_BOLD_ON
-        data += _line("KAMOMAD:", f"-{_format_amount(abs(cash_diff))} UZS !")
-        data += CMD_BOLD_OFF
+        r.add_line("KAMOMAD:", f"-{_format_amount(abs(cash_diff))} !")
     else:
-        # Ortiqcha — kassir ko'p topshirdi
-        data += _line("Ortiqcha:", f"+{_format_amount(cash_diff)} UZS")
-
-    data += _separator("=")
-
-    # ── Naqd pul yechish ──────────────────────────
-    data += CMD_ALIGN_CENTER + CMD_BOLD_ON
-    data += _encode("NAQD PUL YECHISH\n")
-    data += CMD_BOLD_OFF + CMD_ALIGN_LEFT
-    data += _separator("-")
-    data += _line("Tur:", "Smena yopilishi")
-    data += CMD_BOLD_ON
-    data += _line("Summa:", f"{_format_amount(actual_cash)} UZS")
-    data += CMD_BOLD_OFF
-    data += _line("Kassir:", cashier)
-    data += _separator("=")
-
-    # ── Yakuniy xabar ──────────────────────────────
-    data += CMD_ALIGN_CENTER
-    data += CMD_BOLD_ON
-    data += _encode("Smena muvaffaqiyatli\n")
-    data += _encode("yopildi!\n")
-    data += CMD_BOLD_OFF
-    data += _encode(closed_at + "\n")
-    data += CMD_ALIGN_LEFT
-
-    data += CMD_FEED
-    data += CMD_CUT
-
-    return bytes(data)
+        r.add_line("Ortiqcha:", f"+{_format_amount(cash_diff)}")
+        
+    r.add_separator("=")
+    r.add_center("PUL YECHISH")
+    r.add_separator("-")
+    r.add_line("Tur:", "Smena yopilishi")
+    r.add_line("Summa:", f"{_format_amount(actual_cash)} UZS")
+    r.add_line("Kassir:", report_data.get("cashier", "—"))
+    r.add_separator("=")
+    
+    r.add_center("Smena yopildi!")
+    r.add_center(report_data.get("closed_at", "—"))
+    
+    return r.build(is_continuous=True)
