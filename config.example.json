@@ -1,10 +1,7 @@
 {
     "_comment": "Bu fayl namuna. Haqiqiy sozlamalar sinxronizatsiya vaqtida serverdan avtomatik olinadi.",
-    "_note": "POS Profile dagi 'QZ Print' checkbox — print_enabled, 'Customer QZ Printer Name' — customer_printer sifatida ishlatiladi.",
+    "_note": "POS Profile dagi 'Mijoz printer nomi' maydoniga printer device nomini yozing. Agar bo'sh bo'lsa — chop etish o'chirilgan.",
 
-    "_printer_setup": "Printer sozlash: POS Profile → QZ Print = ✓, Customer QZ Printer Name = 'XP-365B' (Windows printer nomi yoki Linux printer nomi)",
-
-    "print_enabled": 1,
     "customer_printer": "XP-365B",
 
     "_production_units_comment": "Production unitlar serverdan sinxronizatsiya qilinadi. Har bir unitning printer_name maydoniga printer device nomini yozing.",

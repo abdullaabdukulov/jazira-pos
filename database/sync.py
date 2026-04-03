@@ -205,7 +205,6 @@ class SyncWorker(QThread):
             return
 
         printer_config = {
-            "print_enabled": result.get("print_enabled", 0),
             "customer_printer": result.get("customer_printer", ""),
             "production_units": result.get("production_units", []),
         }
@@ -214,9 +213,9 @@ class SyncWorker(QThread):
         units_count = len(printer_config["production_units"])
         logger.info(
             "Printer config sinxronizatsiya qilindi: %d ta production unit, "
-            "print_enabled=%s, customer_printer='%s'",
+            "customer_printer='%s'",
             units_count,
-            printer_config["print_enabled"],
             printer_config["customer_printer"],
         )
+
 
