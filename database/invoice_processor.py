@@ -46,10 +46,13 @@ def ensure_mandatory_fields(payload: dict):
 
 
 # ──────────────────────────────────────────────────
-#  Submit invoice (make_invoice + print)
+#  Submit invoice (make_invoice)
 # ──────────────────────────────────────────────────
-def submit_invoice(api, payload: dict, invoice_name: str, payments: list):
-    """sync_order dan keyin make_invoice chaqirish va chop etish"""
+def submit_invoice(api, payload: dict, invoice_name: str, payments: list) -> tuple[bool, str]:
+    """sync_order dan keyin make_invoice chaqirish.
+
+    Returns: (success, error_message)
+    """
     try:
         payment_payload = {
             "customer": payload.get("customer"),
@@ -66,33 +69,78 @@ def submit_invoice(api, payload: dict, invoice_name: str, payments: list):
         )
         if success:
             logger.info("make_invoice muvaffaqiyatli: %s", invoice_name)
-            print_invoice(invoice_name, payload, payments)
+            return True, ""
         else:
             logger.error("make_invoice xatosi (%s): %s", invoice_name, response)
+            return False, str(response)
     except Exception as e:
         logger.error("make_invoice chaqiruvida xatolik (%s): %s", invoice_name, e)
+        return False, str(e)
 
 
-def print_invoice(invoice_name: str, payload: dict, payments: list):
-    """Lokal printer orqali chop etish"""
+# ──────────────────────────────────────────────────
+#  Process a cancel-pending invoice
+# ──────────────────────────────────────────────────
+def process_cancel_pending_invoice(api, invoice) -> tuple[str, str]:
+    """CancelPending: serverda yaratib submit qilib, so'ng bekor qilish.
+
+    Returns: (status, message)
+        status: 'Cancelled' | 'Failed' | 'CancelPending' (retry)
+    """
     try:
-        from core.printer import print_receipt
+        payload = json.loads(invoice.invoice_data)
+        cancel_reason = payload.pop("_cancel_reason", "Oflayn bekor qilindi")
+        saved_payments = payload.pop("_payments", None)
+        existing_order_name = payload.pop("_sync_order_name", None)
+        ensure_mandatory_fields(payload)
+        if "order_type" in payload:
+            payload["order_type"] = ORDER_TYPE_MAP.get(payload["order_type"], payload["order_type"])
 
-        order_data = payload.copy()
-        total_amount = sum(
-            float(item.get("qty", 0)) * float(item.get("rate", item.get("price", 0)))
-            for item in payload.get("items", [])
+        # Step 1: sync_order (agar hali serverda yaratilmagan bo'lsa)
+        if not existing_order_name:
+            success, response = api.call_method(
+                "ury.ury.doctype.ury_order.ury_order.sync_order", payload
+            )
+            if not success or not isinstance(response, dict) or response.get("status") == "Failure":
+                error_str = str(response)
+                if is_permanent_error(error_str):
+                    return "Failed", error_str
+                return "CancelPending", error_str
+            existing_order_name = response.get("name")
+            if not existing_order_name:
+                return "CancelPending", "Invoice name qaytmadi"
+            # Keyingi urinish uchun order name saqlash
+            try:
+                raw = json.loads(invoice.invoice_data)
+                raw["_sync_order_name"] = existing_order_name
+                invoice.invoice_data = json.dumps(raw)
+                invoice.save()
+            except Exception as save_err:
+                logger.error("_sync_order_name saqlashda xatolik: %s", save_err)
+
+        # Step 2: make_invoice (submit)
+        if saved_payments:
+            ok, err = submit_invoice(api, payload, existing_order_name, saved_payments)
+            if not ok:
+                # make_invoice muvaffaqiyatsiz — keyingi urinishda qayta
+                return "CancelPending", f"make_invoice xatosi: {err}"
+
+        # Step 3: cancel_order
+        ok, response = api.call_method(
+            "ury.ury.doctype.ury_order.ury_order.cancel_order",
+            {"invoice_id": existing_order_name, "reason": cancel_reason},
         )
-        order_data["total_amount"] = total_amount
+        if ok:
+            return "Cancelled", f"Serverda bekor qilindi: {existing_order_name}"
+        else:
+            return "CancelPending", f"cancel_order xatosi: {response}"
 
-        results = print_receipt(None, order_data, payments)
-        for p_type, success in results.items():
-            if success:
-                logger.info("Invoice %s — %s printer chop etildi", invoice_name, p_type)
-            else:
-                logger.warning("Invoice %s — %s printer chop etilmadi", invoice_name, p_type)
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.error("Chek #%d JSON xatosi: %s", invoice.id, e)
+        return "Failed", str(e)
     except Exception as e:
-        logger.error("Lokal print xatosi: %s", e)
+        logger.error("Chek #%d bekor sinxron xatosi: %s", invoice.id, e)
+        return "CancelPending", str(e)
 
 
 # ──────────────────────────────────────────────────
@@ -115,8 +163,10 @@ def process_pending_invoice(api, invoice) -> tuple[str, str]:
         # Agar sync_order allaqachon muvaffaqiyatli bo'lgan bo'lsa (faqat make_invoice xato qilgan),
         # qayta sync_order qilmasdan to'g'ridan-to'g'ri submit_invoice qilamiz
         if existing_order_name and saved_payments:
-            submit_invoice(api, payload, existing_order_name, saved_payments)
-            return "Synced", "Muvaffaqiyatli (faqat make_invoice qayta yuborildi)"
+            ok, err = submit_invoice(api, payload, existing_order_name, saved_payments)
+            if ok:
+                return "Synced", "Muvaffaqiyatli (faqat make_invoice qayta yuborildi)"
+            return "Pending", f"make_invoice qayta urinish xatosi: {err}"
 
         success, response = api.call_method(
             "ury.ury.doctype.ury_order.ury_order.sync_order", payload
@@ -125,7 +175,18 @@ def process_pending_invoice(api, invoice) -> tuple[str, str]:
         if success and isinstance(response, dict) and response.get("status") != "Failure":
             invoice_name = response.get("name")
             if invoice_name and saved_payments:
-                submit_invoice(api, payload, invoice_name, saved_payments)
+                ok, err = submit_invoice(api, payload, invoice_name, saved_payments)
+                if ok:
+                    return "Synced", "Muvaffaqiyatli"
+                # sync_order OK lekin make_invoice xato — keyingi urinishda faqat make_invoice
+                try:
+                    raw = json.loads(invoice.invoice_data)
+                    raw["_sync_order_name"] = invoice_name
+                    invoice.invoice_data = json.dumps(raw)
+                    invoice.save()
+                except Exception as save_err:
+                    logger.error("_sync_order_name saqlashda xatolik: %s", save_err)
+                return "Pending", f"sync_order OK, make_invoice xatosi (retry): {err}"
             return "Synced", "Muvaffaqiyatli"
         else:
             error_str = str(response)

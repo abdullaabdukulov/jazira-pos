@@ -4,7 +4,7 @@ from core.config import load_config, save_config
 from core.logger import get_logger
 from core.constants import CUSTOMER_SYNC_LIMIT, DEFAULT_CURRENCY, DEFAULT_CUSTOMER, DEFAULT_UOM
 from database.models import Item, Customer, ItemPrice, PendingInvoice, db
-from database.invoice_processor import process_pending_invoice
+from database.invoice_processor import process_pending_invoice, process_cancel_pending_invoice
 
 logger = get_logger(__name__)
 
@@ -48,7 +48,9 @@ class SyncWorker(QThread):
 
     def _sync_pending_invoices(self):
         self.progress_update.emit("Oflayn cheklar yuborilmoqda...")
-        pending = PendingInvoice.select().where(PendingInvoice.status == "Pending")
+        pending = PendingInvoice.select().where(
+            PendingInvoice.status.in_(["Pending", "CancelPending"])
+        )
 
         if not pending.exists():
             return
@@ -56,7 +58,10 @@ class SyncWorker(QThread):
         count = pending.count()
         for i, inv in enumerate(pending):
             self.progress_update.emit(f"Oflayn chek yuborilmoqda: {i + 1}/{count}")
-            status, message = process_pending_invoice(self.api, inv)
+            if inv.status == "CancelPending":
+                status, message = process_cancel_pending_invoice(self.api, inv)
+            else:
+                status, message = process_pending_invoice(self.api, inv)
             inv.status = status
             inv.error_message = message
             inv.save()
@@ -80,11 +85,26 @@ class SyncWorker(QThread):
         )
 
         payment_methods = []
-        default_customer = DEFAULT_CUSTOMER
+        # default_customer: getPosProfile dan, yo'q bo'lsa profile_doc dan, oxirida DEFAULT_CUSTOMER
+        default_customer = (
+            pos_data.get("default_customer")
+            or (profile_doc.get("customer") if success_detail and isinstance(profile_doc, dict) else None)
+            or DEFAULT_CUSTOMER
+        )
         if success_detail and isinstance(profile_doc, dict):
             payments = profile_doc.get("payments", [])
             payment_methods = [p.get("mode_of_payment") for p in payments]
-            default_customer = profile_doc.get("customer") or DEFAULT_CUSTOMER
+
+        # Faol buyurtma turlarini aniqlash
+        _ot_map = [
+            (pos_data.get("order_type_dine_in", 1),        "Shu yerda"),
+            (pos_data.get("order_type_take_away", 1),       "Saboy"),
+            (pos_data.get("order_type_delivery", 0),        "Dastavka"),
+            (pos_data.get("order_type_delivery_saboy", 0),  "Dastavka Saboy"),
+        ]
+        enabled_order_types = [name for flag, name in _ot_map if flag]
+        if not enabled_order_types:
+            enabled_order_types = ["Shu yerda", "Saboy"]  # fallback
 
         save_config({
             "pos_profile": pos_profile_name,
@@ -94,6 +114,16 @@ class SyncWorker(QThread):
             "currency": pos_data.get("currency", DEFAULT_CURRENCY),
             "payment_methods": payment_methods,
             "default_customer": default_customer,
+            # Desktop POS customization
+            "show_comment":  pos_data.get("show_comment", 1),
+            "show_ticket":   pos_data.get("show_ticket", 1),
+            "show_customer": pos_data.get("show_customer", 1),
+            "show_history":  pos_data.get("show_history", 1),
+            "show_shifts":   pos_data.get("show_shifts", 1),
+            "enabled_order_types": enabled_order_types,
+            "item_columns":    pos_data.get("item_columns", 0),
+            "company_logo":    pos_data.get("company_logo", ""),
+            "receipt_footer":  pos_data.get("receipt_footer", ""),
         })
 
     def _sync_items(self):

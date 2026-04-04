@@ -8,6 +8,7 @@ from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QColor
 from database.models import Customer, db
 from core.logger import get_logger
+from core.config import load_config
 from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
 from ui.components.keyboard import TouchKeyboard
 from ui.components.dialogs import InfoDialog
@@ -38,6 +39,12 @@ class CartWidget(QWidget):
         self.load_customers()
 
     def init_ui(self):
+        cfg = load_config()
+        _show_comment  = bool(cfg.get("show_comment", 1))
+        _show_ticket   = bool(cfg.get("show_ticket", 1))
+        _show_customer = bool(cfg.get("show_customer", 1))
+        _order_types   = cfg.get("enabled_order_types") or ORDER_TYPES
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(s(8), s(8), s(8), s(8))
         main_layout.setSpacing(s(8))
@@ -70,30 +77,36 @@ class CartWidget(QWidget):
         """)
         details_layout.addWidget(type_label)
 
+        # Barcha buyurtma turi tugmalari (doim yaratiladi, visibility bilan boshqariladi)
         types_layout = QHBoxLayout()
         types_layout.setSpacing(s(5))
         for t in ORDER_TYPES:
             btn = QPushButton(t)
-            btn.setFixedHeight(s(50))
+            btn.setFixedHeight(s(56))
             btn.setCheckable(True)
             btn.setStyleSheet(self._order_type_style(False))
             btn.clicked.connect(lambda checked, val=t: self.set_order_type(val))
             types_layout.addWidget(btn, 1)
             self.order_type_buttons[t] = btn
 
-        self.order_type_buttons[ORDER_TYPES[0]].setChecked(True)
-        self.order_type_buttons[ORDER_TYPES[0]].setStyleSheet(self._order_type_style(True))
+        first_type = _order_types[0] if _order_types else ORDER_TYPES[0]
+        self.order_type_buttons[first_type].setChecked(True)
+        self.order_type_buttons[first_type].setStyleSheet(self._order_type_style(True))
+        self.current_order_type = first_type
         details_layout.addLayout(types_layout)
 
-        # Sticker + Customer row
+        # Sticker + Customer row — container widget'larga o'ralgan (toggle uchun)
         middle_row = QHBoxLayout()
         middle_row.setSpacing(s(10))
 
-        sticker_vbox = QVBoxLayout()
+        # Stiker container
+        self._ticket_container = QWidget()
+        self._ticket_container.setStyleSheet("background: transparent;")
+        sticker_vbox = QVBoxLayout(self._ticket_container)
+        sticker_vbox.setContentsMargins(0, 0, 0, 0)
+        sticker_vbox.setSpacing(s(2))
         sticker_label = QLabel("STIKER")
-        sticker_label.setStyleSheet(f"""
-            font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;
-        """)
+        sticker_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
         self.ticket_input = QLineEdit()
         self.ticket_input.setMaxLength(6)
         self.ticket_input.setPlaceholderText("—")
@@ -104,36 +117,49 @@ class CartWidget(QWidget):
         self.ticket_input.textChanged.connect(self._on_ticket_text_changed)
         sticker_vbox.addWidget(sticker_label)
         sticker_vbox.addWidget(self.ticket_input)
-        middle_row.addLayout(sticker_vbox, 1)
+        middle_row.addWidget(self._ticket_container, 1)
 
-        customer_vbox = QVBoxLayout()
+        # Mijoz container
+        self._customer_container = QWidget()
+        self._customer_container.setStyleSheet("background: transparent;")
+        customer_vbox = QVBoxLayout(self._customer_container)
+        customer_vbox.setContentsMargins(0, 0, 0, 0)
+        customer_vbox.setSpacing(s(2))
         customer_label = QLabel("MIJOZ")
-        customer_label.setStyleSheet(f"""
-            font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;
-        """)
+        customer_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
         self.customer_combo = QComboBox()
         self.customer_combo.setEditable(True)
         self.customer_combo.setFixedHeight(s(55))
         self.customer_combo.setStyleSheet(self._input_style())
         customer_vbox.addWidget(customer_label)
         customer_vbox.addWidget(self.customer_combo)
-        middle_row.addLayout(customer_vbox, 3)
+        middle_row.addWidget(self._customer_container, 3)
 
         details_layout.addLayout(middle_row)
 
-        # Comment
+        # Izoh container
+        self._comment_container = QWidget()
+        self._comment_container.setStyleSheet("background: transparent;")
+        comment_vbox = QVBoxLayout(self._comment_container)
+        comment_vbox.setContentsMargins(0, 0, 0, 0)
+        comment_vbox.setSpacing(s(2))
         comment_label = QLabel("IZOH")
-        comment_label.setStyleSheet(f"""
-            font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;
-        """)
+        comment_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
         self.comment_input = QLineEdit()
         self.comment_input.setPlaceholderText("Buyurtma izohi...")
         self.comment_input.setFixedHeight(s(50))
         self.comment_input.setStyleSheet(self._input_style())
         self.comment_input.mousePressEvent = self._open_comment_keyboard
         self.comment_input.textChanged.connect(self._on_comment_text_changed)
-        details_layout.addWidget(comment_label)
-        details_layout.addWidget(self.comment_input)
+        comment_vbox.addWidget(comment_label)
+        comment_vbox.addWidget(self.comment_input)
+        details_layout.addWidget(self._comment_container)
+
+        # Boshlang'ich visibility — config dan
+        self.apply_settings(show_comment=_show_comment,
+                            show_ticket=_show_ticket,
+                            show_customer=_show_customer,
+                            enabled_order_types=_order_types)
 
         main_layout.addWidget(details_group)
 
@@ -150,7 +176,8 @@ class CartWidget(QWidget):
                 border: none;
                 background: white;
                 alternate-background-color: #f8fafc;
-                font-size: {font(14)}px;
+                font-size: {font(16)}px;
+                font-weight: 700;
                 color: #1e293b;
                 selection-background-color: #dbeafe;
                 selection-color: #1e40af;
@@ -163,7 +190,7 @@ class CartWidget(QWidget):
                 background: #f1f5f9;
                 color: #64748b;
                 font-weight: 800;
-                font-size: {font(11)}px;
+                font-size: {font(12)}px;
                 letter-spacing: 1.5px;
                 text-transform: uppercase;
                 padding: {s(10)}px {s(10)}px;
@@ -183,9 +210,9 @@ class CartWidget(QWidget):
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(1, s(160))
-        self.table.setColumnWidth(2, s(100))
-        self.table.setColumnWidth(3, s(110))
+        self.table.setColumnWidth(1, s(176))
+        self.table.setColumnWidth(2, s(112))
+        self.table.setColumnWidth(3, s(124))
         main_layout.addWidget(self.table)
 
         # Touch scroll — sensorli ekranda barmaq bilan surish
@@ -216,7 +243,7 @@ class CartWidget(QWidget):
         """)
         self.total_label = QLabel("0 UZS")
         self.total_label.setStyleSheet(f"""
-            font-size: {font(28)}px; font-weight: 900; color: #0f172a;
+            font-size: {font(34)}px; font-weight: 900; color: #0f172a;
             background: transparent;
         """)
         self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -485,20 +512,20 @@ class CartWidget(QWidget):
     @staticmethod
     def _order_type_style(is_active: bool) -> str:
         _r = s(10)
-        _fs = font(13)
+        _fs = font(15)
         if is_active:
             return f"""
                 QPushButton {{
                     background: #3b82f6; color: white;
                     border: none; border-radius: {_r}px;
-                    font-weight: 700; font-size: {_fs}px;
+                    font-weight: 800; font-size: {_fs}px;
                 }}
             """
         return f"""
             QPushButton {{
                 background: white; color: #475569;
                 border: 1.5px solid #e2e8f0;
-                border-radius: {_r}px; font-weight: 600; font-size: {_fs}px;
+                border-radius: {_r}px; font-weight: 700; font-size: {_fs}px;
             }}
             QPushButton:hover {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
         """
@@ -508,7 +535,8 @@ class CartWidget(QWidget):
         return f"""
             QLineEdit, QComboBox {{
                 padding: {s(10)}px {s(14)}px;
-                font-size: {font(15)}px;
+                font-size: {font(17)}px;
+                font-weight: 700;
                 border: 1.5px solid #e2e8f0;
                 border-radius: {s(10)}px;
                 background: white;
@@ -524,6 +552,31 @@ class CartWidget(QWidget):
     # ─────────────────────────────────────────
     #  Business logic
     # ─────────────────────────────────────────
+    def apply_settings(self, show_comment=None, show_ticket=None,
+                       show_customer=None, enabled_order_types=None):
+        """Config o'zgarganda yoki startup da visibility qo'llash."""
+        cfg = load_config()
+        if show_comment is None:
+            show_comment = bool(cfg.get("show_comment", 1))
+        if show_ticket is None:
+            show_ticket = bool(cfg.get("show_ticket", 1))
+        if show_customer is None:
+            show_customer = bool(cfg.get("show_customer", 1))
+        if enabled_order_types is None:
+            enabled_order_types = cfg.get("enabled_order_types") or ORDER_TYPES
+
+        self._ticket_container.setVisible(show_ticket)
+        self._customer_container.setVisible(show_customer)
+        self._comment_container.setVisible(show_comment)
+
+        # Buyurtma turi tugmalari
+        for t, btn in self.order_type_buttons.items():
+            btn.setVisible(t in enabled_order_types)
+
+        # Faol order type enabled_order_types ichida bo'lishi shart
+        if self.current_order_type not in enabled_order_types and enabled_order_types:
+            self.set_order_type(enabled_order_types[0])
+
     def set_order_type(self, order_type: str):
         self.current_order_type = order_type
         for t, btn in self.order_type_buttons.items():
@@ -541,11 +594,27 @@ class CartWidget(QWidget):
             self.ticket_input.setStyleSheet(self._input_style() + "border: 2px solid #3b82f6;")
 
     def load_customers(self):
+        cfg = load_config()
+        if not cfg.get("show_customer", 1):
+            return
         try:
+            cfg = load_config()
+            default_customer = cfg.get("default_customer", "guest") or "guest"
+
             self.customer_combo.clear()
-            customers = ["guest"]
-            customers.extend([c.name for c in Customer.select()])
+            customers = []
+            if default_customer != "guest":
+                customers.append(default_customer)
+            customers.append("guest")
+            customers.extend([
+                c.name for c in Customer.select()
+                if c.name not in customers
+            ])
             self.customer_combo.addItems(customers)
+            # Default customerni tanlash
+            idx = self.customer_combo.findText(default_customer)
+            if idx >= 0:
+                self.customer_combo.setCurrentIndex(idx)
         except Exception as e:
             logger.debug("Mijozlar yuklanmadi: %s", e)
 
@@ -579,19 +648,20 @@ class CartWidget(QWidget):
         total_amount = 0.0
         currency = "UZS"
 
-        _btn_sz = s(40)
-        _qty_w = s(44)
-        _qty_h = s(40)
+        _btn_sz = s(46)
+        _qty_w = s(52)
+        _qty_h = s(46)
         _r = s(8)
 
         for row_idx, (code, data) in enumerate(self.items.items()):
             self.table.insertRow(row_idx)
-            self.table.setRowHeight(row_idx, s(60))
+            self.table.setRowHeight(row_idx, s(68))
 
             name_item = QTableWidgetItem(data["name"])
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             f = name_item.font()
-            f.setWeight(600)
+            f.setWeight(800)
+            f.setPointSize(font(16))
             name_item.setFont(f)
             self.table.setItem(row_idx, 0, name_item)
 
@@ -606,7 +676,7 @@ class CartWidget(QWidget):
             btn_minus.setFixedSize(_btn_sz, _btn_sz)
             btn_minus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(18)}px; font-weight: bold; color: #ef4444;
+                    font-size: {font(22)}px; font-weight: bold; color: #ef4444;
                     background: #fef2f2;
                     border: 1px solid #fecaca;
                     border-top-left-radius: {_r}px;
@@ -622,7 +692,7 @@ class CartWidget(QWidget):
             qty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_label.setFixedSize(_qty_w, _qty_h)
             qty_label.setStyleSheet(f"""
-                font-size: {font(16)}px; font-weight: 900; color: #0f172a;
+                font-size: {font(20)}px; font-weight: 900; color: #0f172a;
                 background: white;
                 border-top: 1px solid #e2e8f0;
                 border-bottom: 1px solid #e2e8f0;
@@ -633,7 +703,7 @@ class CartWidget(QWidget):
             btn_plus.setFixedSize(_btn_sz, _btn_sz)
             btn_plus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(18)}px; font-weight: bold; color: #22c55e;
+                    font-size: {font(22)}px; font-weight: bold; color: #22c55e;
                     background: #f0fdf4;
                     border: 1px solid #bbf7d0;
                     border-top-right-radius: {_r}px;
@@ -652,7 +722,11 @@ class CartWidget(QWidget):
 
             price_item = QTableWidgetItem(f"{data['price']:,.0f}".replace(",", " "))
             price_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
-            price_item.setForeground(QColor("#64748b"))
+            price_item.setForeground(QColor("#475569"))
+            fp = price_item.font()
+            fp.setWeight(700)
+            fp.setPointSize(font(15))
+            price_item.setFont(fp)
             self.table.setItem(row_idx, 2, price_item)
 
             amount = int(data["qty"]) * data["price"]
@@ -662,7 +736,8 @@ class CartWidget(QWidget):
             amount_item = QTableWidgetItem(f"{amount:,.0f}".replace(",", " "))
             amount_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             f2 = amount_item.font()
-            f2.setWeight(700)
+            f2.setWeight(900)
+            f2.setPointSize(font(16))
             amount_item.setFont(f2)
             amount_item.setForeground(QColor("#0f172a"))
             self.table.setItem(row_idx, 3, amount_item)
@@ -690,7 +765,8 @@ class CartWidget(QWidget):
             return
 
         ticket_number = self.ticket_input.text().strip()
-        selected_customer = self.customer_combo.currentText().strip() or "guest"
+        _default_cust = load_config().get("default_customer", "guest") or "guest"
+        selected_customer = self.customer_combo.currentText().strip() or _default_cust
 
         if self.current_order_type in TICKET_ORDER_TYPES and not ticket_number:
             InfoDialog(self, "Xatolik", "Stiker raqamini kiriting!", kind="warning").exec()

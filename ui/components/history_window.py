@@ -10,6 +10,7 @@ from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import HISTORY_FETCH_LIMIT
 from ui.scale import s, font
+from database.models import PendingInvoice
 
 logger = get_logger(__name__)
 
@@ -84,7 +85,8 @@ class FetchDetailsWorker(QThread):
 
 
 class CancelOrderWorker(QThread):
-    result_ready = pyqtSignal(bool, str)
+    # (success, message, order_data_for_print)
+    result_ready = pyqtSignal(bool, str, dict)
 
     def __init__(self, api: FrappeAPI, invoice_id: str, reason: str):
         super().__init__()
@@ -93,14 +95,41 @@ class CancelOrderWorker(QThread):
         self.api = api
 
     def run(self):
+        # 1. Invoice tafsilotlarini olish (production print uchun)
+        order_data = {}
+        try:
+            ok, doc = self.api.call_method(
+                "frappe.client.get", {"doctype": "POS Invoice", "name": self.invoice_id}
+            )
+            if ok and isinstance(doc, dict):
+                order_data = {
+                    "items": [
+                        {
+                            "item_code": it.get("item_code", ""),
+                            "item": it.get("item_code", ""),
+                            "item_name": it.get("item_name", ""),
+                            "name": it.get("item_name", ""),
+                            "qty": it.get("qty", 1),
+                        }
+                        for it in doc.get("items", [])
+                    ],
+                    "order_type": doc.get("order_type", ""),
+                    "ticket_number": doc.get("ticket_number", ""),
+                    "customer": doc.get("customer", ""),
+                    "cancel_reason": self.reason,
+                }
+        except Exception:
+            pass  # Print bo'lmasa ham bekor qilishni davom ettiramiz
+
+        # 2. Bekor qilish
         success, response = self.api.call_method(
             "ury.ury.doctype.ury_order.ury_order.cancel_order",
             {"invoice_id": self.invoice_id, "reason": self.reason},
         )
         if success:
-            self.result_ready.emit(True, "Chek muvaffaqiyatli bekor qilindi!")
+            self.result_ready.emit(True, "Chek muvaffaqiyatli bekor qilindi!", order_data)
         else:
-            self.result_ready.emit(False, f"Xatolik: {response}")
+            self.result_ready.emit(False, f"Xatolik: {response}", {})
 
 
 class PrintTypeDialog(QDialog):
@@ -253,6 +282,79 @@ class ReprintWorker(QThread):
             self.result_ready.emit(False, f"Xatolik: {e}")
 
 
+class OfflineReprintWorker(QThread):
+    """Oflayn invoice_data dan chek chop etish (server kerak emas)."""
+    result_ready = pyqtSignal(bool, str)
+
+    def __init__(self, invoice_data_json: str, print_type: str = "customer"):
+        super().__init__()
+        self.invoice_data_json = invoice_data_json
+        self.print_type = print_type
+
+    def run(self):
+        try:
+            data = json.loads(self.invoice_data_json)
+        except Exception as e:
+            self.result_ready.emit(False, f"Ma'lumot xatosi: {e}")
+            return
+
+        items = data.get("items", [])
+        order_data = {
+            "items": [
+                {
+                    "item_code": it.get("item", it.get("item_code", "")),
+                    "item":      it.get("item", it.get("item_code", "")),
+                    "item_name": it.get("item_name", ""),
+                    "name":      it.get("item_name", ""),
+                    "qty":       it.get("qty", 1),
+                    "rate":      it.get("rate", 0),
+                    "price":     it.get("rate", 0),
+                    "amount":    float(it.get("rate", 0)) * float(it.get("qty", 1)),
+                }
+                for it in items
+            ],
+            "total_amount": float(data.get("total_amount", 0)),
+            "customer":     data.get("customer", ""),
+            "order_type":   data.get("order_type", ""),
+            "ticket_number": data.get("ticket_number", ""),
+        }
+        payments_list = [
+            {"mode_of_payment": p.get("mode_of_payment", ""), "amount": float(p.get("amount", 0))}
+            for p in (data.get("_payments") or [])
+            if float(p.get("amount", 0)) > 0
+        ]
+
+        try:
+            from core import printer as _printer
+            pt = self.print_type
+            if pt == "customer":
+                ok = _printer.reprint_customer(order_data, payments_list)
+                self.result_ready.emit(ok, "Mijoz cheki chop etildi!" if ok else "Printer xatosi yoki sozlanmagan.")
+            elif pt == "production":
+                results = _printer.reprint_production(order_data)
+                if not results:
+                    self.result_ready.emit(False, "Production printer topilmadi yoki mahsulot yo'q.")
+                    return
+                failed = [u for u, ok in results.items() if not ok]
+                if not failed:
+                    self.result_ready.emit(True, f"Oshxona/Bar chopi yuborildi: {', '.join(results)}")
+                else:
+                    self.result_ready.emit(False, f"Xato unitlar: {', '.join(failed)}")
+            else:  # all
+                results = _printer.reprint_all(order_data, payments_list)
+                cust_ok = results.pop("customer", None)
+                prod_failed = [u for u, ok in results.items() if not ok]
+                if cust_ok and not prod_failed:
+                    self.result_ready.emit(True, "Barcha printerga yuborildi!")
+                elif cust_ok:
+                    self.result_ready.emit(True, f"Mijoz OK. Xato unitlar: {', '.join(prod_failed)}")
+                else:
+                    self.result_ready.emit(False, "Printer xatosi.")
+        except Exception as e:
+            logger.error("Oflayn reprint xatosi: %s", e)
+            self.result_ready.emit(False, f"Xatolik: {e}")
+
+
 # ─────────────────────────────────────
 #  Inline detail panel (replaces dialog)
 # ─────────────────────────────────────
@@ -383,12 +485,21 @@ class TransactionDetailDialog(QDialog):
 # ─────────────────────────────────────
 #  Cancel reason dialog with keyboard
 # ─────────────────────────────────────
+QUICK_CANCEL_REASONS = [
+    "Mijoz buyurtmani o'zgartirdi",
+    "Noto'g'ri buyurtma kiritildi",
+    "Mijoz rad etdi / ketdi",
+    "Test / sinov buyurtma",
+    "Texnik sabab",
+]
+
+
 class CancelReasonDialog(QDialog):
     def __init__(self, parent, invoice_id: str):
         super().__init__(parent)
         self.invoice_id = invoice_id
         self.setWindowTitle("Bekor qilish sababi")
-        self.setFixedSize(s(620), s(480))
+        self.setFixedSize(s(660), s(560))
         self.setStyleSheet("background: white;")
         self._init_ui()
 
@@ -402,13 +513,44 @@ class CancelReasonDialog(QDialog):
         title.setStyleSheet(f"font-size: {font(16)}px; font-weight: 800; color: #1e293b;")
         layout.addWidget(title)
 
+        # Quick reason chips
+        quick_lbl = QLabel("TEZKOR SABABLAR:")
+        quick_lbl.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        layout.addWidget(quick_lbl)
+
+        chips_row1 = QHBoxLayout()
+        chips_row1.setSpacing(s(6))
+        chips_row2 = QHBoxLayout()
+        chips_row2.setSpacing(s(6))
+        for i, reason in enumerate(QUICK_CANCEL_REASONS):
+            btn = QPushButton(reason)
+            btn.setFixedHeight(s(38))
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #f1f5f9; color: #334155;
+                    font-size: {font(11)}px; font-weight: 600;
+                    border-radius: {s(8)}px; border: 1.5px solid #e2e8f0;
+                    padding: 0 {s(10)}px;
+                }}
+                QPushButton:hover {{ background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }}
+                QPushButton:pressed {{ background: #fecaca; }}
+            """)
+            btn.clicked.connect(lambda _, r=reason: self._fill_reason(r))
+            if i < 3:
+                chips_row1.addWidget(btn)
+            else:
+                chips_row2.addWidget(btn)
+        chips_row2.addStretch()
+        layout.addLayout(chips_row1)
+        layout.addLayout(chips_row2)
+
         # Input display
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Sabab yozing...")
-        self.input.setFixedHeight(s(46))
+        self.input.setPlaceholderText("Sabab yozing yoki yuqoridan tanlang...")
+        self.input.setFixedHeight(s(48))
         self.input.setStyleSheet(f"""
             QLineEdit {{
-                font-size: {font(15)}px; color: #1e293b;
+                font-size: {font(14)}px; color: #1e293b;
                 background: white;
                 border: 2px solid #3b82f6;
                 border-radius: {s(10)}px; padding: {s(8)}px {s(14)}px;
@@ -455,6 +597,17 @@ class CancelReasonDialog(QDialog):
         btn_row.addWidget(confirm_btn)
 
         layout.addLayout(btn_row)
+
+    def _fill_reason(self, reason: str):
+        self.input.setText(reason)
+        self.input.setStyleSheet(f"""
+            QLineEdit {{
+                font-size: {font(14)}px; color: #1e293b;
+                background: white;
+                border: 2px solid #3b82f6;
+                border-radius: {s(10)}px; padding: {s(8)}px {s(14)}px;
+            }}
+        """)
 
     def _make_key(self, key):
         label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
@@ -659,9 +812,118 @@ class HistoryWindow(QWidget):
             reprint_btn.clicked.connect(lambda _, inv=inv_name, btn=reprint_btn: self._reprint(inv, btn))
             self.table.setCellWidget(i, 6, reprint_btn)
 
+        self._add_offline_rows()
+
+    def _add_offline_rows(self):
+        """Oflayn (sinxronlanmagan) orderlarni jadvalga qo'shish."""
+        try:
+            pending_list = list(
+                PendingInvoice.select()
+                .where(PendingInvoice.status.in_(["Pending", "CancelPending", "Failed", "Cancelled"]))
+                .order_by(PendingInvoice.created_at.desc())
+                .limit(50)
+            )
+        except Exception as e:
+            logger.warning("Oflayn orderlarni yuklab bo'lmadi: %s", e)
+            return
+
+        for inv in pending_list:
+            try:
+                data = json.loads(inv.invoice_data)
+            except Exception:
+                data = {}
+
+            customer = data.get("customer", "—")
+            total = float(data.get("total_amount", 0))
+            if not total and data.get("items"):
+                total = sum(
+                    float(it.get("rate", 0)) * float(it.get("qty", 1))
+                    for it in data.get("items", [])
+                )
+            created = inv.created_at.strftime("%Y-%m-%d") if inv.created_at else ""
+            created_time = inv.created_at.strftime("%H:%M") if inv.created_at else ""
+
+            i = self.table.rowCount()
+            self.table.insertRow(i)
+            self.table.setRowHeight(i, s(46))
+
+            # ID ustuni — "OFLAYN" belgisi bilan
+            id_item = QTableWidgetItem(f"OFLAYN")
+            id_item.setForeground(Qt.GlobalColor.darkBlue)
+            id_item.setToolTip(str(inv.offline_id or inv.id))
+            self.table.setItem(i, 0, id_item)
+            self.table.setItem(i, 1, QTableWidgetItem(created))
+            self.table.setItem(i, 2, QTableWidgetItem(created_time))
+            self.table.setItem(i, 3, QTableWidgetItem(customer))
+            amt_item = QTableWidgetItem(f"{total:,.0f} UZS".replace(",", " "))
+            amt_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            self.table.setItem(i, 4, amt_item)
+
+            # Bekor qilish / holat ustuni (5-ustun)
+            if inv.status in ("CancelPending", "Cancelled"):
+                lbl = QLabel("Bekor qilingan")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                if inv.status == "CancelPending":
+                    lbl.setToolTip("Serverga sinxronlanishi kutilmoqda")
+                lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
+                self.table.setCellWidget(i, 5, lbl)
+            elif inv.status == "Pending":
+                cancel_btn = QPushButton("Bekor")
+                cancel_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: #fef3c7; color: #b45309;
+                        font-weight: 600; font-size: {font(12)}px;
+                        border-radius: {s(6)}px; border: 1px solid #fde68a;
+                        padding: {s(4)}px {s(8)}px;
+                    }}
+                    QPushButton:hover {{ background: #fde68a; }}
+                """)
+                cancel_btn.clicked.connect(
+                    lambda _, pid=inv.id, idata=inv.invoice_data: self._confirm_cancel_offline(pid, idata)
+                )
+                self.table.setCellWidget(i, 5, cancel_btn)
+            else:
+                # Failed
+                lbl = QLabel("Xato")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setStyleSheet(f"color: #dc2626; font-weight: 600; font-size: {font(11)}px;")
+                self.table.setCellWidget(i, 5, lbl)
+
+            # Chop etish ustuni — oflayn orderlar uchun chop etish tugmasi
+            print_btn = QPushButton("🖨 Chop")
+            print_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #f0fdf4; color: #15803d;
+                    font-weight: 600; font-size: {font(12)}px;
+                    border-radius: {s(6)}px; border: 1px solid #bbf7d0;
+                    padding: {s(4)}px {s(8)}px;
+                }}
+                QPushButton:hover {{ background: #dcfce7; }}
+                QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }}
+            """)
+            print_btn.clicked.connect(
+                lambda _, idata=inv.invoice_data, btn=print_btn: self._reprint_offline(idata, btn)
+            )
+            self.table.setCellWidget(i, 6, print_btn)
+
     def _show_details(self, item):
         invoice_id = self.table.item(item.row(), 0).text()
+        if invoice_id == "OFLAYN":
+            return  # Oflayn orderlar uchun tafsilot oynasi yo'q
         TransactionDetailDialog(self, self.api, invoice_id).exec()
+
+    def _reprint_offline(self, invoice_data_json: str, btn: QPushButton):
+        dlg = PrintTypeDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        print_type = dlg.print_type or "customer"
+        btn.setEnabled(False)
+        btn.setText("Chop etilmoqda...")
+        self.offline_reprint_worker = OfflineReprintWorker(invoice_data_json, print_type)
+        self.offline_reprint_worker.result_ready.connect(
+            lambda ok, msg, b=btn: self._on_reprint_finished(ok, msg, b)
+        )
+        self.offline_reprint_worker.start()
 
     def _confirm_cancel(self, invoice_id: str):
         dlg = CancelReasonDialog(self, invoice_id)
@@ -671,8 +933,81 @@ class HistoryWindow(QWidget):
             self.cancel_worker.result_ready.connect(self._on_cancel_finished)
             self.cancel_worker.start()
 
-    def _on_cancel_finished(self, success: bool, message: str):
-        QMessageBox.information(self, "Natija", message)
+    def _on_cancel_finished(self, success: bool, message: str, order_data: dict):
+        if success:
+            msg = (
+                "Bekor so'rovi yuborildi!\n\n"
+                "Oshxona/bar xabardor qilindi.\n"
+                "Manager ERPNext da ko'rib tasdiqlaydi."
+            )
+            QMessageBox.information(self, "So'rov yuborildi", msg)
+            # Production unitlarga "QAYTARILDI" stikeri
+            if order_data.get("items"):
+                try:
+                    from core.printer import print_cancel_production
+                    results = print_cancel_production(order_data, order_data.get("cancel_reason", ""))
+                    if results:
+                        failed = [u for u, ok in results.items() if not ok]
+                        if failed:
+                            logger.warning("Bekor stikeri yuborilmadi: %s", ", ".join(failed))
+                except Exception as e:
+                    logger.error("Bekor stikeri chop etishda xatolik: %s", e)
+        else:
+            QMessageBox.warning(self, "Xatolik", message)
+        self.load_history()
+
+    def _confirm_cancel_offline(self, pending_id: int, invoice_data_json: str):
+        """Oflayn orderni bekor qilish — server API siz, faqat local DB."""
+        try:
+            data = json.loads(invoice_data_json)
+        except Exception:
+            data = {}
+        display_id = f"OFLAYN-{pending_id}"
+        dlg = CancelReasonDialog(self, display_id)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        reason = dlg.get_reason()
+        try:
+            raw = json.loads(invoice_data_json)
+            raw["_cancel_reason"] = reason
+            PendingInvoice.update(
+                status="CancelPending",
+                invoice_data=json.dumps(raw),
+                error_message=f"Bekor kutilmoqda: {reason}",
+            ).where(PendingInvoice.id == pending_id).execute()
+        except Exception as e:
+            QMessageBox.warning(self, "Xatolik", f"Oflayn bekor qilishda xatolik: {e}")
+            return
+
+        # Production unitlarga QAYTARILDI stikeri
+        items = data.get("items", [])
+        if items:
+            order_data = {
+                "items": [
+                    {
+                        "item_code": it.get("item", it.get("item_code", "")),
+                        "item_name": it.get("item_name", ""),
+                        "name": it.get("item_name", ""),
+                        "qty": it.get("qty", 1),
+                    }
+                    for it in items
+                ],
+                "order_type": data.get("order_type", ""),
+                "ticket_number": data.get("ticket_number", ""),
+                "customer": data.get("customer", ""),
+                "cancel_reason": reason,
+            }
+            try:
+                from core.printer import print_cancel_production
+                results = print_cancel_production(order_data, reason)
+                if results:
+                    failed = [u for u, ok in results.items() if not ok]
+                    if failed:
+                        logger.warning("Bekor stikeri yuborilmadi: %s", ", ".join(failed))
+            except Exception as e:
+                logger.error("Bekor stikeri chop etishda xatolik: %s", e)
+
+        QMessageBox.information(self, "Bekor qilindi", "Oflayn buyurtma bekor qilindi.\nOshxona xabardor qilindi.")
         self.load_history()
 
     def _reprint(self, invoice_id: str, btn: QPushButton):

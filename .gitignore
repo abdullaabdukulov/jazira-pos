@@ -1,4 +1,6 @@
 build/
+pos_data.db-shm
+pos_data.db-wal
 dist/
 pos_data.db
 config.json

@@ -112,6 +112,15 @@ def get_item_groups_map(items: list) -> dict:
 # ──────────────────────────────────────────────────
 #  Chek Yaratish (TSPL formatida)
 # ──────────────────────────────────────────────────
+def _get_receipt_footer() -> str:
+    """config.json dan chek pastki matni."""
+    try:
+        from core.config import load_config as _lc
+        return _lc().get("receipt_footer", "") or ""
+    except Exception:
+        return ""
+
+
 def build_customer_receipt(order_data: dict, payments_list: list, config: dict) -> bytes:
     """Mijoz uchun TSPL (Stiker) cheki"""
     r = TSPLReceipt()
@@ -172,8 +181,9 @@ def build_customer_receipt(order_data: dict, payments_list: list, config: dict) 
     if comment:
         r.add_text(f"Izoh: {comment}")
         
-    r.add_center("Xaridingiz uchun rahmat!", step=40)
-    
+    footer = _get_receipt_footer()
+    r.add_center(footer if footer else "Xaridingiz uchun rahmat!", step=40)
+
     return r.build(is_continuous=True)
 
 
@@ -207,6 +217,43 @@ def build_production_receipt(order_data: dict, unit_items: list, unit_name: str)
     if comment:
         r.add_text(f"IZOH: {comment}", font="3", step=40)
         
+    return r.build(is_continuous=True)
+
+
+def build_cancel_production_receipt(
+    order_data: dict, unit_items: list, unit_name: str, cancel_reason: str
+) -> bytes:
+    """Production unitga bekor qilinganlik xabari (QAYTARILDI stikeri)"""
+    r = TSPLReceipt()
+    r.add_center(f"--- {unit_name} ---", font="3", step=40)
+    r.add_separator("*")
+    r.add_center("!! QAYTARILDI !!", font="4", step=50)
+    r.add_separator("*")
+
+    order_type = order_data.get("order_type", "")
+    r.add_center(order_type, font="3", step=40)
+    r.add_center(datetime.now().strftime("%H:%M:%S"))
+
+    ticket_number = order_data.get("ticket_number", "")
+    if ticket_number:
+        r.add_center(f"# {ticket_number}", font="4", step=45)
+
+    r.add_separator("=")
+
+    for item in unit_items:
+        name = item.get("item_name", item.get("name", ""))
+        qty = int(item.get("qty", 0))
+        r.add_line(name[:20], f"x{qty}", font="3", step=40)
+
+    r.add_separator("=")
+
+    if cancel_reason:
+        r.add_text("SABAB:", font="3", step=35)
+        # Uzun sababni bo'laklash (har 22 belgi)
+        for i in range(0, len(cancel_reason), 22):
+            r.add_text(cancel_reason[i:i + 22], x=20, font="3", step=35)
+
+    r.add_separator("-")
     return r.build(is_continuous=True)
 
 

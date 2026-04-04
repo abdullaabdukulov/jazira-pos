@@ -4,7 +4,7 @@ from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import OFFLINE_SYNC_INTERVAL
 from database.models import PendingInvoice, db
-from database.invoice_processor import process_pending_invoice
+from database.invoice_processor import process_pending_invoice, process_cancel_pending_invoice
 
 logger = get_logger(__name__)
 
@@ -31,7 +31,9 @@ class OfflineSyncWorker(QThread):
 
     def _sync_pending_invoices(self):
         try:
-            pending = PendingInvoice.select().where(PendingInvoice.status == "Pending")
+            pending = PendingInvoice.select().where(
+                PendingInvoice.status.in_(["Pending", "CancelPending"])
+            )
 
             if not pending.exists():
                 return
@@ -40,12 +42,15 @@ class OfflineSyncWorker(QThread):
             self.sync_status.emit(f"Oflayn cheklar topildi: {count} ta. Yuborilmoqda...")
 
             for invoice in pending:
-                status, message = process_pending_invoice(self.api, invoice)
+                if invoice.status == "CancelPending":
+                    status, message = process_cancel_pending_invoice(self.api, invoice)
+                else:
+                    status, message = process_pending_invoice(self.api, invoice)
                 invoice.status = status
                 invoice.error_message = message
                 invoice.save()
 
-                if status == "Synced":
+                if status in ("Synced", "Cancelled"):
                     self.sync_status.emit(f"Chek #{invoice.id} muvaffaqiyatli serverga yuborildi.")
                 elif status == "Failed":
                     self.sync_status.emit(f"Chek #{invoice.id} server xatosi (qayta urinilmaydi): {message}")

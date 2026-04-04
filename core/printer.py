@@ -15,6 +15,7 @@ from core.logger import get_logger
 from core.receipt_builder import (
     build_customer_receipt,
     build_production_receipt,
+    build_cancel_production_receipt,
     build_cash_drawer_command,
     build_z_report_receipt,
     get_item_groups_map,
@@ -265,6 +266,48 @@ def reprint_all(order_data: dict, payments_list: list) -> dict:
     results = {}
     results["customer"] = reprint_customer(order_data, payments_list)
     results.update(reprint_production(order_data))
+    return results
+
+
+def print_cancel_production(order_data: dict, cancel_reason: str) -> dict:
+    """Bekor qilingan buyurtmani production unitlarga QAYTARILDI stikeri yuborish.
+
+    Qaytaradi: {unit_name: True/False, ...}
+    """
+    results = {}
+    cfg = _get_printer_config()
+    prod_units = cfg["production_units"]
+    if not prod_units:
+        return results
+
+    items_list = order_data.get("items", [])
+    item_groups_map = get_item_groups_map(items_list)
+
+    for unit in prod_units:
+        unit_name = unit.get("name", "")
+        unit_printer = unit.get("printer_name", "")
+        if not unit_printer:
+            continue
+
+        unit_item_groups = set(unit.get("item_groups", []))
+        unit_items = [
+            item for item in items_list
+            if item_groups_map.get(
+                item.get("item_code", item.get("item", ""))
+            ) in unit_item_groups
+        ]
+        if not unit_items:
+            continue
+
+        try:
+            receipt_data = build_cancel_production_receipt(
+                order_data, unit_items, unit_name, cancel_reason
+            )
+            results[unit_name] = _send_raw(unit_printer, receipt_data)
+        except Exception as e:
+            logger.error("Bekor stikeri xatosi (%s): %s", unit_name, e)
+            results[unit_name] = False
+
     return results
 
 

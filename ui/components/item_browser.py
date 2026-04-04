@@ -562,14 +562,20 @@ class ItemBrowser(QWidget):
 
     def _calc_grid_columns(self):
         """Ekran kengligiga qarab ustunlar soni.
-        15.6" (1920px) → 4 ta,  24"+ → 5-6 ta,  kichik → 3 ta."""
+        15.6" (1920px) → 4 ta,  24"+ → 5-6 ta,  kichik → 3 ta.
+        POS Profile da custom_item_columns sozlansa, u ustunlik qiladi."""
+        from core.config import load_config as _lc
+        forced = int(_lc().get("item_columns") or 0)
+        if 2 <= forced <= 6:
+            return forced
+
         available = self.items_scroll.viewport().width()
         if available <= 0:
             available = s(600)
         spacing = self.items_grid.spacing()
-        min_card_width = s(220)  # kattaroq karta = kamroq ustun
+        min_card_width = s(220)
         cols = max(2, (available + spacing) // (min_card_width + spacing))
-        return min(cols, 6)  # Maksimum 6 ustun
+        return min(cols, 6)
 
     def _cleanup_pending(self, widget):
         """Loader tugagach widget'ni xavfsiz o'chirish (GUI threadga qaytib keladi)."""

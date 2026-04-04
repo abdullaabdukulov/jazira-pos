@@ -186,6 +186,9 @@ class MainWindow(QMainWindow):
             logger.warning("Local DB kassa tekshiruvi xatosi: %s", e)
             self._stack.setCurrentIndex(0)
 
+        # Startup da mavjud config dan sozlamalarni qo'llash
+        self._apply_pos_settings()
+
         # Background workers — darhol (kechiktirmasdan)
         QTimer.singleShot(0, self._start_background_workers)
 
@@ -477,6 +480,7 @@ class MainWindow(QMainWindow):
         tab_count = self.sales_tabs.count()
         new_cart = CartWidget()
         new_cart.checkout_requested.connect(self.on_checkout)
+        new_cart.apply_settings()
         tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
 
@@ -564,6 +568,7 @@ class MainWindow(QMainWindow):
         cfg = load_config()
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
         self._update_cashier_badge(cfg.get("cashier", cfg.get("user", "")))
+        self._apply_pos_settings(cfg)
         if success:
             # Sidebar kategoriyalarini va itemlarni yangilash
             self.item_browser.load_categories()
@@ -579,6 +584,25 @@ class MainWindow(QMainWindow):
                 InfoDialog(self, "Muvaffaqiyatli", message, kind="success").exec()
             else:
                 InfoDialog(self, "Xatolik", message, kind="error").exec()
+
+    def _apply_pos_settings(self, cfg: dict = None):
+        """Startup va sinxrondan keyin POS sozlamalarini UIga qo'llash."""
+        if cfg is None:
+            cfg = load_config()
+        show_history = bool(cfg.get("show_history", 1))
+        show_shifts  = bool(cfg.get("show_shifts", 1))
+        self.history_btn.setVisible(show_history)
+        self.shifts_btn.setVisible(show_shifts)
+        if not show_history:
+            self.history_panel.setVisible(False)
+        if not show_shifts:
+            self.shifts_panel.setVisible(False)
+
+        # Barcha ochiq cart tab'larni yangilash
+        for i in range(self.sales_tabs.count()):
+            cart = self.sales_tabs.widget(i)
+            if cart and hasattr(cart, "apply_settings"):
+                cart.apply_settings()
 
     # ── POS Opening / Closing ────────────────────────
     def _check_pos_opening(self):
