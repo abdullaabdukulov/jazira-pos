@@ -25,13 +25,17 @@ class SyncWorker(QThread):
             logged_user = self._get_logged_user()
             self._sync_pos_profile(logged_user)
             self._sync_printer_config()
-            self._sync_items()
-            self._sync_customers()
+            items_ok = self._sync_items()
+            customers_ok = self._sync_customers()
 
             warnings = []
             config = load_config()
             if not config.get("pos_profile"):
                 warnings.append("POS profil topilmadi")
+            if not items_ok:
+                warnings.append("Tovarlar yangilanmadi")
+            if not customers_ok:
+                warnings.append("Mijozlar yangilanmadi")
 
             if warnings:
                 self.sync_finished.emit(True, "Sinxronizatsiya yakunlandi (ogohlantirishlar: " + "; ".join(warnings) + ")")
@@ -161,11 +165,11 @@ class SyncWorker(QThread):
         if not success or not isinstance(menu_data, dict):
             logger.warning("Menu ma'lumotlari olinmadi")
             self.progress_update.emit("Tovarlar olinmadi — o'tkazib yuborildi")
-            return
+            return False
 
         items = menu_data.get("items", [])
         if not items:
-            return
+            return True
 
         # Har bir item uchun item_group ni olish (batch)
         item_codes = [it.get("item") for it in items if it.get("item")]
@@ -213,13 +217,14 @@ class SyncWorker(QThread):
                 ItemPrice.delete().where(ItemPrice.item_code.not_in(server_item_codes)).execute()
 
         logger.info("%d ta tovar sinxronizatsiya qilindi", len(items))
+        return True
 
     def _sync_customers(self):
         self.progress_update.emit("Mijozlar yuklanmoqda...")
         fields = '["name", "customer_name", "customer_group", "mobile_no"]'
         customers = self.api.fetch_data("Customer", fields=fields, limit=CUSTOMER_SYNC_LIMIT)
         if not customers:
-            return
+            return False
 
         with db.atomic():
             for cust_data in customers:
@@ -231,6 +236,7 @@ class SyncWorker(QThread):
                 ).on_conflict_replace().execute()
 
         logger.info("%d ta mijoz sinxronizatsiya qilindi", len(customers))
+        return True
 
     def _sync_printer_config(self):
         """Serverdan printer konfiguratsiyasini sinxronizatsiya qilish.
