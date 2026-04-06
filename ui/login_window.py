@@ -11,7 +11,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QThread
 from PyQt6.QtGui import QColor, QPainter, QLinearGradient, QBrush
 
 from core.api import FrappeAPI
-from core.config import load_config, save_pin, verify_pin, has_pin
+from core.config import load_config, save_config, verify_pin, get_cashiers
 from core.logger import get_logger
 from ui.scale import s, font
 
@@ -90,9 +90,9 @@ def _btn_back_style():
     """
 
 
-# ── Background auto-login ────────────────────────────────
+# ── Background auto-login + cashier sync ─────────────────
 class AutoLoginWorker(QThread):
-    result_ready = pyqtSignal(bool, str)
+    result_ready = pyqtSignal(bool, str)   # (success, message)
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
@@ -106,25 +106,52 @@ class AutoLoginWorker(QThread):
             return
         try:
             ok, msg = self.api.login(url, user, pwd, site)
+            if ok:
+                self._sync_cashiers()
             self.result_ready.emit(ok, msg)
         except Exception as e:
             self.result_ready.emit(False, str(e))
+
+    def _sync_cashiers(self):
+        """Serverdan kassirlarni olish va config.json ga saqlash."""
+        try:
+            success, data = self.api.call_method("ury.ury_pos.api.get_pos_cashiers")
+            if not success or not isinstance(data, list):
+                return
+
+            # Lokal saqlangan PIN larni saqlab qolish (server PIN bo'lmasa)
+            existing = {
+                (c.get("full_name") or c.get("name", "")).lower(): c
+                for c in load_config().get("cashiers", [])
+            }
+            merged = []
+            for sc in data:
+                full_name = sc.get("full_name") or sc.get("name", "")
+                server_pin = sc.get("pin", "")
+                local = existing.get(full_name.lower(), {})
+                merged.append({
+                    "name": full_name,
+                    "full_name": full_name,
+                    "user": sc.get("user", ""),
+                    "pin": server_pin if server_pin else local.get("pin", ""),
+                })
+            save_config({"cashiers": merged})
+            logger.info("Kassirlar sinxronizatsiya qilindi: %d ta", len(merged))
+        except Exception as e:
+            logger.warning("Kassirlarni sinxronlashda xatolik: %s", e)
 
 
 # ══════════════════════════════════════════════════════════
 #  LoginWindow — markazlashtirilgan PIN ekrani
 # ══════════════════════════════════════════════════════════
 class LoginWindow(QWidget):
-    login_successful = pyqtSignal()
+    login_successful = pyqtSignal(object)   # carries active_cashier dict or None
 
     def __init__(self, api: FrappeAPI):
         super().__init__()
         self.api = api
         self._api_ready = False
         self._digits = ""
-        self._setup_first = ""
-        self._setup_state = "verify_old"   # verify_old | enter_new | confirm_new
-        self._mode = "enter"               # enter | setup
 
         self._build_ui()
         self._start_auto_login()
@@ -206,23 +233,9 @@ class LoginWindow(QWidget):
         # Numpad
         col.addWidget(self._build_numpad())
 
-        # PIN reset link
-        self._link = QPushButton("PIN ni qayta o'rnatish")
-        self._link.setStyleSheet(
-            f"QPushButton {{ background: transparent; color: rgba(255,255,255,0.2);"
-            f" font-size: {font(11)}px; border: none; text-decoration: underline; }}"
-            f"QPushButton:hover {{ color: rgba(255,255,255,0.45); }}"
-        )
-        self._link.clicked.connect(self._goto_setup)
-        col.addWidget(self._link, alignment=Qt.AlignmentFlag.AlignCenter)
-
         root.addLayout(col)
 
-        # Boshlang'ich holat
-        if has_pin():
-            self._set_mode_enter()
-        else:
-            self._set_mode_setup_new()
+        self._set_mode_enter()
 
     # ── Numpad ────────────────────────────────────────────
     def _build_numpad(self):
@@ -278,49 +291,29 @@ class LoginWindow(QWidget):
     def _on_complete(self):
         pin = self._digits
         self._reset_input()
-
-        if self._mode == "enter":
-            self._verify_pin(pin)
-        else:
-            self._handle_setup(pin)
+        self._verify_pin(pin)
 
     # ── PIN kirish ────────────────────────────────────────
     def _verify_pin(self, pin: str):
+        # Avval kassirlar ro'yxatida qidirish
+        cashiers = get_cashiers()
+        if cashiers:
+            for c in cashiers:
+                if c.get("pin") == pin:
+                    logger.info("Kassir aniqlandi: %s", c.get("full_name") or c.get("name"))
+                    self.login_successful.emit(c)
+                    self.close()
+                    return
+            self._show_error("PIN noto'g'ri!")
+            return
+
+        # Kassirlar yo'q — qurilma PINi orqali kirish (fallback)
         if verify_pin(pin):
-            logger.info("PIN tasdiqlandi")
-            self.login_successful.emit()
+            logger.info("Qurilma PIN tasdiqlandi")
+            self.login_successful.emit(None)
             self.close()
         else:
             self._show_error("PIN noto'g'ri!")
-
-    # ── PIN o'rnatish (3 bosqich) ─────────────────────────
-    def _handle_setup(self, pin: str):
-        if self._setup_state == "verify_old":
-            if verify_pin(pin):
-                self._setup_state = "enter_new"
-                self._title.setText("Yangi PIN kiriting")
-                self._show_status("Eski PIN tasdiqlandi ✅", "#86efac")
-                QTimer.singleShot(800, lambda: self._status.setText(""))
-            else:
-                self._show_error("Eski PIN noto'g'ri!")
-
-        elif self._setup_state == "enter_new":
-            self._setup_first = pin
-            self._setup_state = "confirm_new"
-            self._title.setText("PIN ni tasdiqlang")
-            self._show_status("Qayta kiriting", "#93c5fd")
-
-        elif self._setup_state == "confirm_new":
-            if pin == self._setup_first:
-                save_pin(pin)
-                logger.info("PIN o'rnatildi")
-                self.login_successful.emit()
-                self.close()
-            else:
-                self._setup_state = "enter_new"
-                self._setup_first = ""
-                self._title.setText("Yangi PIN kiriting")
-                self._show_error("PIN mos kelmadi! Qaytadan kiriting")
 
     # ── Mode o'tkazish ────────────────────────────────────
     def _set_mode_enter(self):
@@ -329,39 +322,6 @@ class LoginWindow(QWidget):
         self._refresh_dots()
         self._title.setText("PIN kiriting")
         self._status.setText("")
-        self._link.setText("PIN ni qayta o'rnatish")
-        self._link.setVisible(True)
-        self._link.clicked.disconnect()
-        self._link.clicked.connect(self._goto_setup)
-
-    def _set_mode_setup_new(self):
-        """Birinchi marta PIN o'rnatish (eski PIN yo'q)."""
-        self._mode = "setup"
-        self._setup_state = "enter_new"
-        self._setup_first = ""
-        self._digits = ""
-        self._refresh_dots()
-        self._title.setText("PIN belgilang")
-        self._status.setText("")
-        self._link.setVisible(False)
-
-    def _goto_setup(self):
-        self._mode = "setup"
-        self._setup_first = ""
-        self._digits = ""
-        self._refresh_dots()
-        if has_pin():
-            self._setup_state = "verify_old"
-            self._title.setText("Eski PIN ni kiriting")
-            self._show_status("Xavfsizlik uchun eski PINni kiriting", "#fbbf24")
-        else:
-            self._setup_state = "enter_new"
-            self._title.setText("PIN belgilang")
-            self._status.setText("")
-        self._link.setText("Bekor qilish")
-        self._link.setVisible(has_pin())
-        self._link.clicked.disconnect()
-        self._link.clicked.connect(self._set_mode_enter)
 
     # ── Yordamchi ─────────────────────────────────────────
     def _show_error(self, text: str):
@@ -388,6 +348,12 @@ class LoginWindow(QWidget):
         if success:
             logger.info("Background auto-login muvaffaqiyatli")
             self.api.reload_settings()
+            self._show_status("✓  Tayyor", "#86efac")
+            QTimer.singleShot(1200, lambda: self._status.setText(""))
         else:
             logger.warning("Background auto-login xatosi: %s", message)
-            self._show_status("⚠  Server bilan aloqa yo'q", "#fbbf24")
+            cached = get_cashiers()
+            if cached:
+                self._show_status("⚠  Oflayn — saqlangan ma'lumotlar ishlatilmoqda", "#fbbf24")
+            else:
+                self._show_status("⚠  Server bilan aloqa yo'q", "#fbbf24")

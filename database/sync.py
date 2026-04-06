@@ -106,6 +106,28 @@ class SyncWorker(QThread):
         if not enabled_order_types:
             enabled_order_types = ["Shu yerda", "Saboy"]  # fallback
 
+        # Kassirlar ro'yxati: server pin_hash ni ustunlik bilan qabul qilish
+        server_cashiers = pos_data.get("cashiers")
+        local_cashiers = {
+            (c.get("full_name") or c.get("name", "")).lower(): c
+            for c in load_config().get("cashiers", []) if c.get("name")
+        }
+        if isinstance(server_cashiers, list) and server_cashiers:
+            cashiers_to_save = []
+            for sc in server_cashiers:
+                full_name = sc.get("full_name") or sc.get("name", "")
+                server_pin = sc.get("pin", "")
+                local = local_cashiers.get(full_name.lower(), {})
+                pin = server_pin if server_pin else local.get("pin", "")
+                cashiers_to_save.append({
+                    "name": full_name,
+                    "full_name": full_name,
+                    "user": sc.get("user", ""),
+                    "pin": pin,
+                })
+        else:
+            cashiers_to_save = load_config().get("cashiers", [])
+
         save_config({
             "pos_profile": pos_profile_name,
             "cashier": pos_data.get("cashier") or logged_user,
@@ -124,6 +146,7 @@ class SyncWorker(QThread):
             "item_columns":    pos_data.get("item_columns", 0),
             "company_logo":    pos_data.get("company_logo", ""),
             "receipt_footer":  pos_data.get("receipt_footer", ""),
+            "cashiers": cashiers_to_save,
         })
 
     def _sync_items(self):

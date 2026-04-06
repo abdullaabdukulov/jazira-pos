@@ -147,10 +147,11 @@ def _tb_btn(label: str, kind: str = "neutral") -> QPushButton:
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, api: FrappeAPI):
+    def __init__(self, api: FrappeAPI, active_cashier: dict = None):
         super().__init__()
         self.api = api
         self.opening_entry = None
+        self.active_cashier = active_cashier   # {"name": ..., "full_name": ..., "pin_hash": ...}
         self.setWindowTitle("Jazira POS")
 
         initialize_db()
@@ -188,6 +189,9 @@ class MainWindow(QMainWindow):
 
         # Startup da mavjud config dan sozlamalarni qo'llash
         self._apply_pos_settings()
+
+        # Badge ni yangilash (active_cashier mavjud bo'lsa uning full_name chiqadi)
+        self._update_cashier_badge()
 
         # Background workers — darhol (kechiktirmasdan)
         QTimer.singleShot(0, self._start_background_workers)
@@ -386,17 +390,25 @@ class MainWindow(QMainWindow):
         """)
 
     def _update_cashier_badge(self, cashier: str = ""):
-        if not cashier:
-            self.cashier_badge.setText("Noma'lum")
+        # active_cashier mavjud bo'lsa — uning full_name ni ko'rsat
+        if self.active_cashier:
+            display = self.active_cashier.get("full_name") or self.active_cashier.get("name", "")
+        elif cashier:
+            # Fallback: ERPNext foydalanuvchi nomi (kassirlar yo'q holatda)
+            display = cashier.split('@')[0].replace('.', ' ').replace('_', ' ').title()
         else:
-            name_part = cashier.split('@')[0]
-            name_part = name_part.replace('.', ' ').replace('_', ' ').title()
-            self.cashier_badge.setText(name_part)
-
+            display = "—"
+        self.cashier_badge.setText(display)
         self.cashier_badge.setStyleSheet(f"""
             font-size: {font(13)}px; font-weight: 800; color: #0369a1;
             background: transparent;
         """)
+
+    def get_active_cashier_name(self) -> str:
+        """Checkout uchun faol kassir ismini qaytarish."""
+        if self.active_cashier:
+            return self.active_cashier.get("full_name") or self.active_cashier.get("name", "")
+        return ""
 
     # ── Background workers ───────────────────────────
     def _start_background_workers(self):
@@ -506,6 +518,7 @@ class MainWindow(QMainWindow):
             active_cart.add_item(item_code, item_name, price, currency)
 
     def on_checkout(self, order_data: dict):
+        order_data["active_cashier"] = self.get_active_cashier_name()
         dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)
         dialog.exec()

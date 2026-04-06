@@ -57,12 +57,12 @@ def main():
         windows["login"].login_successful.connect(show_main)
         windows["login"].show()
 
-    def show_main():
+    def show_main(active_cashier=None):
         if windows["login"]:
             windows["login"].close()
             windows["login"] = None
 
-        windows["main"] = MainWindow(shared_api)
+        windows["main"] = MainWindow(shared_api, active_cashier=active_cashier)
         windows["main"].showMaximized()
 
     if not shared_api.is_configured():

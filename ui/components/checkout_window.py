@@ -508,6 +508,7 @@ class CheckoutWindow(QDialog):
             "aggregator_id": "",
             "total_amount": float(self.total_amount),
             "custom_offline_id": self.offline_id,
+            "active_cashier": str(self.order_data.get("active_cashier", "")),
         }
 
         self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
