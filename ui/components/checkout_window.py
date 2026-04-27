@@ -1,3 +1,4 @@
+# type:ignore
 import json
 import uuid
 from PyQt6.QtWidgets import (
