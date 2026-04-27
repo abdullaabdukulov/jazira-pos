@@ -671,6 +671,7 @@ class HistoryWindow(QWidget):
         self.opening_entry = ""
         self.pos_profile = ""
         self.cashier = ""
+        self._locally_cancelled: set = set()  # server qaytmaguncha mahalliy kuzatish
         self._init_ui()
 
     def _init_ui(self):
@@ -778,7 +779,16 @@ class HistoryWindow(QWidget):
             amt.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             self.table.setItem(i, 4, amt)
 
-            if status != "Cancelled":
+            is_cancelled = status == "Cancelled" or inv_name in self._locally_cancelled
+            if is_cancelled:
+                # Server "Cancelled" qaytsa yoki mahalliy bekor qilingan bo'lsa
+                if status == "Cancelled":
+                    self._locally_cancelled.discard(inv_name)  # serverda tasdiqlandi — tozalash
+                lbl = QLabel("Bekor qilingan")
+                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
+                self.table.setCellWidget(i, 5, lbl)
+            else:
                 cancel_btn = QPushButton("Bekor")
                 cancel_btn.setStyleSheet(f"""
                     QPushButton {{
@@ -791,11 +801,6 @@ class HistoryWindow(QWidget):
                 """)
                 cancel_btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
                 self.table.setCellWidget(i, 5, cancel_btn)
-            else:
-                lbl = QLabel("Bekor qilingan")
-                lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
-                self.table.setCellWidget(i, 5, lbl)
 
             # Qayta chop etish tugmasi (barcha cheklar uchun)
             reprint_btn = QPushButton("🖨 Chop")
@@ -930,11 +935,15 @@ class HistoryWindow(QWidget):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             reason = dlg.get_reason()
             self.cancel_worker = CancelOrderWorker(self.api, invoice_id, reason)
-            self.cancel_worker.result_ready.connect(self._on_cancel_finished)
+            self.cancel_worker.result_ready.connect(
+                lambda ok, msg, od, _inv=invoice_id: self._on_cancel_finished(ok, msg, od, _inv)
+            )
             self.cancel_worker.start()
 
-    def _on_cancel_finished(self, success: bool, message: str, order_data: dict):
+    def _on_cancel_finished(self, success: bool, message: str, order_data: dict, invoice_id: str = ""):
         if success:
+            if invoice_id:
+                self._locally_cancelled.add(invoice_id)
             msg = (
                 "Bekor so'rovi yuborildi!\n\n"
                 "Oshxona/bar xabardor qilindi.\n"

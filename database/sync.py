@@ -84,20 +84,16 @@ class SyncWorker(QThread):
 
         pos_profile_name = pos_data.get("pos_profile")
 
-        success_detail, profile_doc = self.api.call_method(
-            "frappe.client.get", {"doctype": "POS Profile", "name": pos_profile_name}
-        )
+        # default_customer: getPosProfile dan, yo'q bo'lsa DEFAULT_CUSTOMER
+        default_customer = pos_data.get("default_customer") or DEFAULT_CUSTOMER
 
-        payment_methods = []
-        # default_customer: getPosProfile dan, yo'q bo'lsa profile_doc dan, oxirida DEFAULT_CUSTOMER
-        default_customer = (
-            pos_data.get("default_customer")
-            or (profile_doc.get("customer") if success_detail and isinstance(profile_doc, dict) else None)
-            or DEFAULT_CUSTOMER
-        )
-        if success_detail and isinstance(profile_doc, dict):
-            payments = profile_doc.get("payments", [])
-            payment_methods = [p.get("mode_of_payment") for p in payments]
+        # Payment methods — endi getPosProfile dan keladi (alohida API chaqiruvi shart emas)
+        # Server bo'sh ro'yxat qaytarsa, eski cache ni saqlash (yo'qolib qolmasin)
+        server_payments = pos_data.get("payment_methods")
+        if isinstance(server_payments, list) and server_payments:
+            payment_methods = [p for p in server_payments if p]
+        else:
+            payment_methods = load_config().get("payment_methods", [])
 
         # Faol buyurtma turlarini aniqlash
         _ot_map = [
