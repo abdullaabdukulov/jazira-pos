@@ -259,18 +259,23 @@ class SyncWorker(QThread):
             logger.warning("Printer konfiguratsiyasini olib bo'lmadi")
             return
 
+        # Server endi customer_printer ni dict sifatida qaytaradi:
+        # {name, driver, width_mm}. Production unitlar ham xuddi shunday.
+        # Backward compat: agar string kelsa, _normalize_printer ishlaydi.
+        customer_raw = result.get("customer_printer", "")
         printer_config = {
-            "customer_printer": result.get("customer_printer", ""),
-            "production_units": result.get("production_units", []),
+            "customer_printer": customer_raw if customer_raw else "",
+            "production_units": result.get("production_units", []) or [],
         }
 
         save_config(printer_config)
         units_count = len(printer_config["production_units"])
+        cp = printer_config["customer_printer"]
+        cp_name = cp.get("name", "") if isinstance(cp, dict) else cp
         logger.info(
             "Printer config sinxronizatsiya qilindi: %d ta production unit, "
             "customer_printer='%s'",
-            units_count,
-            printer_config["customer_printer"],
+            units_count, cp_name,
         )
 
 
