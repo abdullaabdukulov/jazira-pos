@@ -599,13 +599,12 @@ class CartWidget(QWidget):
             return
         try:
             cfg = load_config()
-            default_customer = cfg.get("default_customer", "guest") or "guest"
+            default_customer = cfg.get("default_customer", "") or ""
 
             self.customer_combo.clear()
             customers = []
-            if default_customer != "guest":
+            if default_customer:
                 customers.append(default_customer)
-            customers.append("guest")
             customers.extend([
                 c.name for c in Customer.select()
                 if c.name not in customers
@@ -765,7 +764,7 @@ class CartWidget(QWidget):
             return
 
         ticket_number = self.ticket_input.text().strip()
-        _default_cust = load_config().get("default_customer", "guest") or "guest"
+        _default_cust = load_config().get("default_customer", "")
         selected_customer = self.customer_combo.currentText().strip() or _default_cust
 
         if self.current_order_type in TICKET_ORDER_TYPES and not ticket_number:

@@ -32,7 +32,7 @@ def load_config() -> dict:
             logger.error("config.json o'qishda xatolik: %s", e)
 
     # Defaults and Env overrides
-    config["url"] = os.getenv("FRAPPE_URL", config.get("url", "https://jazira.erpcontrol.uz/")).rstrip("/")
+    config["url"] = os.getenv("FRAPPE_URL", config.get("url", "")).rstrip("/")
     config["site"] = os.getenv("FRAPPE_SITE", config.get("site", ""))
     config["api_key"] = os.getenv("FRAPPE_API_KEY", config.get("api_key", ""))
     config["api_secret"] = os.getenv("FRAPPE_API_SECRET", config.get("api_secret", ""))

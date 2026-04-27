@@ -493,7 +493,7 @@ class CheckoutWindow(QDialog):
             "cashier": str(config.get("cashier", "Administrator")),
             "owner": str(config.get("owner", "Administrator")),
             "mode_of_payment": payments[0]["mode_of_payment"] if payments else (config.get("payment_methods") or ["Cash"])[0],
-            "customer": str(self.order_data.get("customer", "guest")),
+            "customer": str(self.order_data.get("customer") or config.get("default_customer", "")),
             "no_of_pax": 1,
             "last_invoice": "",
             "waiter": str(config.get("cashier", "Administrator")),  # server API talab qiladi
