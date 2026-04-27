@@ -91,6 +91,14 @@ class ESCPOSReceipt(BaseReceipt):
     FEED3      = b"\x1b\x64\x03"       # ESC d 3 — feed 3 lines
     INTL_RU    = b"\x1b\x52\x07"       # ESC R 7 — Russia char set
 
+    # CRITICAL: Xitoyda ishlab chiqarilgan Xprinter, Goojprt va boshqa
+    # modellarda Kanji (CJK) mode default yoqilgan — bytelarni GBK deb
+    # interpret qilib xitoy belgilarga aylantiradi. ESC t (codepage) shu
+    # rejimda inkor etiladi. Quyidagi buyruqlar Kanji ni o'chirish uchun:
+    KANJI_OFF  = b"\x1c\x2e"           # FS . — Cancel Kanji (CJK) mode
+    KANJI_OFF2 = b"\x1c\x21\x00"       # FS ! 0 — Kanji print mode = 0
+    USERDEF_ON = b"\x1b\x25\x01"       # ESC % 1 — enable user-defined chars
+
     # Codepage table: encoding -> ESC t buyruq kodi
     CODEPAGE_TABLE = {
         "cp1251": b"\x1b\x74\x2e",     # ESC t 46 — Windows-1251 Russian
@@ -103,8 +111,19 @@ class ESCPOSReceipt(BaseReceipt):
         self.codepage = (codepage or "cp1251").lower()
         cp_cmd = self.CODEPAGE_TABLE.get(self.codepage, self.CODEPAGE_TABLE["cp1251"])
         self.buf = bytearray()
-        # Reset → russia charset → kirill codepage
-        self.buf += self.INIT + self.INTL_RU + cp_cmd
+        # Init order matters:
+        # 1. ESC @ — reset printer
+        # 2. FS . — cancel Kanji mode (Xprinter/Goojprt da default yoqilgan!)
+        # 3. FS ! 0 — kanji print mode off
+        # 4. ESC R 7 — international char set Russia
+        # 5. ESC t N — codepage tanlash (CP1251 yoki CP866)
+        self.buf += (
+            self.INIT
+            + self.KANJI_OFF
+            + self.KANJI_OFF2
+            + self.INTL_RU
+            + cp_cmd
+        )
 
     def _encode(self, text: str) -> bytes:
         """Matnni tanlangan codepage ga aylantirish."""
