@@ -26,7 +26,7 @@ def load_config() -> dict:
     config = {}
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r") as f:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
         except (json.JSONDecodeError, PermissionError) as e:
             logger.error("config.json o'qishda xatolik: %s", e)
@@ -47,7 +47,7 @@ def save_config(data: dict):
         config = {}
         if os.path.exists(CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, "r") as f:
+                with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     config = json.load(f)
             except (json.JSONDecodeError, PermissionError):
                 pass
@@ -63,7 +63,7 @@ def save_config(data: dict):
             config.pop(key, None)
 
         try:
-            with open(CONFIG_FILE, "w") as f:
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
         except PermissionError:
             logger.error("config.json yozishda ruxsat yo'q")
