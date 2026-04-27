@@ -28,7 +28,7 @@ def load_config() -> dict:
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
-        except (json.JSONDecodeError, PermissionError) as e:
+        except (json.JSONDecodeError, PermissionError, UnicodeDecodeError) as e:
             logger.error("config.json o'qishda xatolik: %s", e)
 
     # Defaults and Env overrides
