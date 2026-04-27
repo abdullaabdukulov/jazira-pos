@@ -29,7 +29,7 @@ ORDER_TYPE_LABELS = {
 }
 
 # Default printer config — ko'rsatilmasa shu ishlatiladi
-DEFAULT_PRINTER_CFG = {"driver": "escpos", "width_mm": 58}
+DEFAULT_PRINTER_CFG = {"driver": "escpos", "width_mm": 58, "codepage": "cp1251"}
 
 
 # ==========================================================
@@ -69,7 +69,15 @@ class ESCPOSReceipt(BaseReceipt):
       ESC ! n     - print mode (n=0x10/0x20: double-height/width)
       ESC d n     - feed n lines
       GS V m      - paper cut (m=0 full, 1 partial)
-      ESC t n     - codepage select (n=17 for CP866 cyrillic, 6/46/47 var.)
+      ESC t n     - codepage select (n=17 PC866, 46 WPC1251)
+      ESC R n     - international char set (7 = Russia, 0 = USA)
+
+    Codepage matn kodirovkasi:
+      cp866 — DOS/PC866 (CIS Cyrillic, ESC t 17)
+      cp1251 — Windows-1251 (Russian, ESC t 46)
+
+    Default cp1251 — XP-58 IIH va shunga o'xshash chek printerlari uchun
+    eng keng tarqalgan.
     """
 
     INIT       = b"\x1b\x40"           # ESC @ — reset
@@ -81,18 +89,26 @@ class ESCPOSReceipt(BaseReceipt):
     DBL_OFF    = b"\x1b\x21\x00"       # ESC ! 0
     CUT        = b"\x1d\x56\x42\x00"   # GS V B 0 — partial cut + feed
     FEED3      = b"\x1b\x64\x03"       # ESC d 3 — feed 3 lines
-    # Codepage 17 (PC866) — kirill harflari uchun eng keng tarqalgan
-    CODEPAGE   = b"\x1b\x74\x11"
+    INTL_RU    = b"\x1b\x52\x07"       # ESC R 7 — Russia char set
 
-    def __init__(self, width_mm: int = 58):
+    # Codepage table: encoding -> ESC t buyruq kodi
+    CODEPAGE_TABLE = {
+        "cp1251": b"\x1b\x74\x2e",     # ESC t 46 — Windows-1251 Russian
+        "cp866":  b"\x1b\x74\x11",     # ESC t 17 — PC866 Cyrillic (DOS)
+        "cp437":  b"\x1b\x74\x00",     # ESC t 0  — USA (default, no cyrillic)
+    }
+
+    def __init__(self, width_mm: int = 58, codepage: str = "cp1251"):
         super().__init__(width_mm)
+        self.codepage = (codepage or "cp1251").lower()
+        cp_cmd = self.CODEPAGE_TABLE.get(self.codepage, self.CODEPAGE_TABLE["cp1251"])
         self.buf = bytearray()
-        self.buf += self.INIT + self.CODEPAGE
+        # Reset → russia charset → kirill codepage
+        self.buf += self.INIT + self.INTL_RU + cp_cmd
 
-    @staticmethod
-    def _encode(text: str) -> bytes:
-        """Kirill matnini CP866 ga aylantirish (ESC/POS chek printerlari uchun)."""
-        return text.encode("cp866", errors="replace")
+    def _encode(self, text: str) -> bytes:
+        """Matnni tanlangan codepage ga aylantirish."""
+        return str(text).encode(self.codepage, errors="replace")
 
     def add_text(self, text: str):
         self.buf += self.ALIGN_L + self._encode(str(text)) + b"\n"
@@ -206,13 +222,14 @@ def _make_receipt(printer_cfg: dict = None) -> BaseReceipt:
     cfg = {**DEFAULT_PRINTER_CFG, **(printer_cfg or {})}
     driver = (cfg.get("driver") or "escpos").lower()
     width = int(cfg.get("width_mm") or 58)
+    codepage = (cfg.get("codepage") or "cp1251").lower()
 
     if driver == "tspl":
         return TSPLReceipt(width_mm=width)
     # default va noma'lum driver — ESC/POS (eng keng tarqalgan)
     if driver != "escpos":
         logger.warning("Noma'lum driver '%s' — ESC/POS ishlatildi", driver)
-    return ESCPOSReceipt(width_mm=width)
+    return ESCPOSReceipt(width_mm=width, codepage=codepage)
 
 
 # ==========================================================

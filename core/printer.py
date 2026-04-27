@@ -65,6 +65,7 @@ def _normalize_printer(raw) -> dict:
             "name": raw.get("name", "") or raw.get("printer_name", ""),
             "driver": (raw.get("driver") or DEFAULT_PRINTER_CFG["driver"]).lower(),
             "width_mm": int(raw.get("width_mm") or DEFAULT_PRINTER_CFG["width_mm"]),
+            "codepage": (raw.get("codepage") or DEFAULT_PRINTER_CFG["codepage"]).lower(),
         }
 
     return {"name": "", **DEFAULT_PRINTER_CFG}
@@ -79,6 +80,7 @@ def _normalize_unit(raw: dict) -> dict:
         "printer_name": raw.get("printer_name", "") or "",
         "driver": (raw.get("driver") or DEFAULT_PRINTER_CFG["driver"]).lower(),
         "width_mm": int(raw.get("width_mm") or DEFAULT_PRINTER_CFG["width_mm"]),
+        "codepage": (raw.get("codepage") or DEFAULT_PRINTER_CFG["codepage"]).lower(),
         "item_groups": raw.get("item_groups", []) or [],
     }
 
@@ -169,7 +171,11 @@ def _get_printer_config() -> dict:
 
 def _printer_cfg(printer: dict) -> dict:
     """Printer dict dan receipt builder uchun config ajratish."""
-    return {"driver": printer["driver"], "width_mm": printer["width_mm"]}
+    return {
+        "driver": printer["driver"],
+        "width_mm": printer["width_mm"],
+        "codepage": printer.get("codepage", "cp1251"),
+    }
 
 
 # ──────────────────────────────────────────────────
