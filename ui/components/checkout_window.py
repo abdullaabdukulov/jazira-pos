@@ -510,6 +510,14 @@ class CheckoutWindow(QDialog):
             "custom_offline_id": self.offline_id,
             "active_cashier": str(self.order_data.get("active_cashier", "")),
         }
+        # MANA SHU YERDA QO'SHASIZ:
+        import json
+        print("\n=== YUBORILAYOTGAN PAYLOAD ===")
+        print(json.dumps(payload, indent=4, ensure_ascii=False))
+        print("==============================\n")
+        logger.info(f"Yuborilayotgan payload: {json.dumps(payload, ensure_ascii=False)}")
+
+        self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
 
         self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
         self.worker.result_ready.connect(self._on_worker_finished)
