@@ -85,8 +85,16 @@ class ESCPOSReceipt(BaseReceipt):
     ALIGN_C    = b"\x1b\x61\x01"       # ESC a 1
     BOLD_ON    = b"\x1b\x45\x01"       # ESC E 1
     BOLD_OFF   = b"\x1b\x45\x00"       # ESC E 0
-    DBL_ON     = b"\x1b\x21\x30"       # ESC ! 0x30 (double w+h)
-    DBL_OFF    = b"\x1b\x21\x00"       # ESC ! 0
+    # GS ! n — Character Size: yuqori 4 bit width-1, past 4 bit height-1
+    # 0x11 = 2x width + 2x height (eng keng tarqalgan double)
+    # GS ! Xprinter modellarida ESC ! ga qaraganda yaxshiroq qo'llaniladi
+    # va belgilarni yopishtirib qo'ymaydi
+    DBL_ON     = b"\x1d\x21\x11"       # GS ! 0x11 — 2x w + 2x h
+    DBL_OFF    = b"\x1d\x21\x00"       # GS ! 0 — normal size
+    # ESC SP n — character right-spacing in dots (default 0)
+    # Big modeda biroz spacing qo'yamiz — belgilar yopishib qolmasin
+    CHAR_SP_N  = b"\x1b\x20\x00"       # 0 dots — normal modda
+    CHAR_SP_W  = b"\x1b\x20\x02"       # 2 dots — big modda
     CUT        = b"\x1d\x56\x42\x00"   # GS V B 0 — partial cut + feed
     FEED3      = b"\x1b\x64\x03"       # ESC d 3 — feed 3 lines
     INTL_RU    = b"\x1b\x52\x07"       # ESC R 7 — Russia char set
@@ -134,9 +142,10 @@ class ESCPOSReceipt(BaseReceipt):
 
     def add_center(self, text: str, big: bool = False):
         if big:
-            self.buf += self.ALIGN_C + self.DBL_ON + self.BOLD_ON
+            # Big mode: char spacing qo'shamiz — belgilar yopishmasin
+            self.buf += self.ALIGN_C + self.CHAR_SP_W + self.DBL_ON + self.BOLD_ON
             self.buf += self._encode(str(text)) + b"\n"
-            self.buf += self.DBL_OFF + self.BOLD_OFF + self.ALIGN_L
+            self.buf += self.DBL_OFF + self.BOLD_OFF + self.CHAR_SP_N + self.ALIGN_L
         else:
             self.buf += self.ALIGN_C + self.BOLD_ON
             self.buf += self._encode(str(text)) + b"\n"
@@ -315,7 +324,7 @@ def build_customer_receipt(
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
         r.add_separator("=")
-        r.add_center(f"STIKER: {ticket_number}", big=True)
+        r.add_center(f"Stiker raqami: {ticket_number}")
         r.add_separator("=")
 
     r.add_line("Nomi", "Soni Summa")
@@ -377,7 +386,7 @@ def build_production_receipt(
 
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
-        r.add_center(f"# {ticket_number}", big=True)
+        r.add_center(f"Stiker №{ticket_number}")
 
     customer = order_data.get("customer", "")
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
@@ -421,7 +430,7 @@ def build_cancel_production_receipt(
 
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
-        r.add_center(f"# {ticket_number}", big=True)
+        r.add_center(f"Stiker №{ticket_number}")
 
     r.add_separator("=")
 
