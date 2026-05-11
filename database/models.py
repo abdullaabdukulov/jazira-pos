@@ -24,6 +24,11 @@ class Item(BaseModel):
     image = CharField(null=True)
     has_batch_no = BooleanField(default=False)
     is_stock_item = BooleanField(default=True)
+    # Top sotuv darajasi — server tomondan oxirgi 30 kun sotuv statistikasi
+    # bo'yicha keladi. 0 = oddiy, 1=top, 2=top-2, 3=top-3 (eng zo'r).
+    # UI da rim raqami (I, II, III) bilan badge ko'rsatiladi.
+    sales_count = IntegerField(default=0, index=True)
+    top_level = IntegerField(default=0)  # 0..3 (rim raqami uchun)
     last_sync = DateTimeField(default=datetime.datetime.now)
 
 

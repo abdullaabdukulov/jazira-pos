@@ -27,6 +27,11 @@ MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_posshift_opening_entry ON posshift(opening_entry);",
         "CREATE INDEX IF NOT EXISTS idx_posshift_status ON posshift(status);",
     ]),
+    (5, "Add sales_count and top_level columns to item (top sellers ranking)", [
+        "ALTER TABLE item ADD COLUMN sales_count INTEGER DEFAULT 0;",
+        "ALTER TABLE item ADD COLUMN top_level INTEGER DEFAULT 0;",
+        "CREATE INDEX IF NOT EXISTS idx_item_sales_count ON item(sales_count);",
+    ]),
 ]
 
 

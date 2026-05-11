@@ -22,14 +22,32 @@ from core.logger import get_logger
 logger = get_logger(__name__)
 
 ORDER_TYPE_LABELS = {
-    "Shu yerda": "Xarid cheki",
-    "Saboy": "Olib ketish cheki",
-    "Dastavka": "Dastavka cheki",
-    "Dastavka Saboy": "Dastavka cheki",
+    "Shu yerda": "XARID CHEKI",
+    "Saboy": "OLIB KETISH",
+    "Dastavka": "DASTAVKA",
+    "Dastavka Saboy": "DASTAVKA",
 }
+
+# Naqd to'lov turlarini aniqlash (har qanday tilda)
+CASH_PAYMENT_KEYS = {"cash", "naqd", "naqd pul", "наличные", "нахт"}
 
 # Default printer config — ko'rsatilmasa shu ishlatiladi
 DEFAULT_PRINTER_CFG = {"driver": "escpos", "width_mm": 58, "codepage": "cp1251"}
+
+
+def _format_uz_datetime(dt: datetime = None) -> str:
+    """Sanani o'zbekcha formatda: '12-may, 2026  19:30'"""
+    if dt is None:
+        dt = datetime.now()
+    months_uz = [
+        "yan", "fev", "mar", "apr", "may", "iyun",
+        "iyul", "avg", "sen", "okt", "noy", "dek"
+    ]
+    return f"{dt.day:02d}-{months_uz[dt.month-1]}, {dt.year}  {dt.strftime('%H:%M')}"
+
+
+def _is_cash_payment(mop: str) -> bool:
+    return (mop or "").strip().lower() in CASH_PAYMENT_KEYS
 
 
 # ==========================================================
@@ -46,9 +64,18 @@ class BaseReceipt:
 
     def __init__(self, width_mm: int = 58):
         self.width_mm = width_mm
-        # Qog'oz kengligi bo'yicha qator sig'imi (small font)
-        # Empirik: 58mm ≈ 32 char, 80mm ≈ 48 char (1mm ≈ 0.55 char)
-        self.line_chars = max(20, int(width_mm * 0.55))
+        # Qator sig'imi (Font A, normal mode):
+        #   58mm chek printeri (XP-58 IIH)   → 32 char
+        #   80mm chek printeri (XP-80C)      → 48 char
+        # Empirik formula: ~0.6 char/mm (Font A 12 dots = 1.5mm)
+        if width_mm >= 80:
+            self.line_chars = 48
+        elif width_mm >= 76:
+            self.line_chars = 46
+        elif width_mm >= 58:
+            self.line_chars = 32
+        else:
+            self.line_chars = max(20, int(width_mm * 0.55))
 
     def add_text(self, text: str): raise NotImplementedError
     def add_center(self, text: str, big: bool = False): raise NotImplementedError
@@ -306,28 +333,35 @@ def build_customer_receipt(
     config: dict,
     printer_cfg: dict = None,
 ) -> bytes:
-    """Mijoz cheki — driver/width adaptive."""
+    """Mijoz cheki — vizual hierarchy bilan, 58/80mm uchun moslashgan."""
     r = _make_receipt(printer_cfg)
 
+    # ── HEADER: kompaniya nomi va buyurtma turi (big) ──
     company = config.get("company", "JAZIRA POS")
-    r.add_center(company, big=True)
-
+    r.add_separator("=")
+    r.add_center(company.upper(), big=True)
     order_type = order_data.get("order_type", "")
-    r.add_center(_order_type_label(order_type))
-    r.add_text(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+    r.add_center(_order_type_label(order_type), big=True)
+    r.add_separator("=")
 
+    # ── Sana va vaqt ──
+    r.add_center(_format_uz_datetime())
+
+    # ── Mijoz (dastavka uchun) ──
     customer = order_data.get("customer", "")
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
-        r.add_separator("-")
         r.add_text(f"Mijoz: {customer}")
 
+    # ── Stiker raqami (katta) ──
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
-        r.add_separator("=")
-        r.add_center(f"Stiker raqami: {ticket_number}")
-        r.add_separator("=")
+        r.add_separator("-")
+        r.add_center(f"Stiker №{ticket_number}", big=True)
 
-    r.add_line("Nomi", "Soni Summa")
+    r.add_separator("=")
+
+    # ── Mahsulotlar jadvali ──
+    r.add_line("Mahsulot", "Soni  Summa")
     r.add_separator("-")
 
     items_list = order_data.get("items", [])
@@ -337,35 +371,44 @@ def build_customer_receipt(
         name = item.get("name", item.get("item_name", ""))
         qty = int(item.get("qty", 0))
         price = float(item.get("price", item.get("rate", 0)))
-        right_part = f"{qty}  {_format_amount(qty * price)}"
+        amount_str = _format_amount(qty * price)
+        right_part = f"{qty:>3}  {amount_str:>10}"
 
+        # Uzun nomlarni 2 qatorga ajratish
         if len(name) + len(right_part) > r.line_chars - 1:
             r.add_text(name[:r.line_chars])
             r.add_line("", right_part)
         else:
             r.add_line(name, right_part)
 
+    # ── JAMI (katta) ──
     r.add_separator("=")
-    r.add_line("JAMI:", f"{_format_amount(total_amount)} UZS")
+    r.add_center(f"JAMI: {_format_amount(total_amount)} UZS", big=True)
     r.add_separator("=")
 
-    r.add_text("TO'LOVLAR:")
+    # ── To'lovlar ──
+    r.add_text("To'lovlar:")
     for p in payments_list:
         if float(p.get("amount", 0)) > 0:
-            r.add_line(f"  {p['mode_of_payment']}:", f"{_format_amount(p['amount'])} UZS")
+            r.add_line(f"  {p['mode_of_payment']}", f"{_format_amount(p['amount'])} UZS")
 
     total_paid = sum(float(p.get("amount", 0)) for p in payments_list)
     change = max(0, total_paid - total_amount)
     if change > 0:
         r.add_separator("-")
-        r.add_line("QAYTIM:", f"{_format_amount(change)} UZS")
+        r.add_line("Qaytim:", f"{_format_amount(change)} UZS")
 
+    # ── Izoh ──
     comment = order_data.get("comment", "")
     if comment:
+        r.add_separator("-")
         r.add_text(f"Izoh: {comment}")
 
+    # ── Footer ──
+    r.add_separator("=")
     footer = _get_receipt_footer()
     r.add_center(footer if footer else "Xaridingiz uchun rahmat!")
+    r.add_center("Sizni yana kutamiz!")
 
     return r.build()
 
@@ -376,36 +419,52 @@ def build_production_receipt(
     unit_name: str,
     printer_cfg: dict = None,
 ) -> bytes:
-    """Oshxona/Bar uchun chek."""
+    """Oshxona/Bar uchun chek — katta shrift, uzoqdan o'qiladigan."""
     r = _make_receipt(printer_cfg)
-    r.add_center(f"--- {unit_name} ---")
 
+    # ── Unit nomi (KATTA) — oshpaz uzoqdan ko'radi ──
+    r.add_separator("=")
+    r.add_center(unit_name.upper(), big=True)
+    r.add_separator("=")
+
+    # ── Buyurtma turi va vaqt ──
     order_type = order_data.get("order_type", "")
-    r.add_center(order_type)
-    r.add_center(datetime.now().strftime("%H:%M:%S"))
+    r.add_center(_order_type_label(order_type), big=True)
+    r.add_center(datetime.now().strftime("%H:%M"))
 
+    # ── Stiker raqami (KATTA) — eng muhim ma'lumot ──
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
-        r.add_center(f"Stiker №{ticket_number}")
+        r.add_separator("-")
+        r.add_center(f"Stiker №{ticket_number}", big=True)
+        r.add_separator("-")
 
+    # ── Mijoz (dastavka) ──
     customer = order_data.get("customer", "")
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
         r.add_text(f"Mijoz: {customer}")
 
     r.add_separator("=")
 
+    # ── Mahsulotlar (KATTA — eng muhim) ──
     for item in unit_items:
         name = item.get("name", item.get("item_name", ""))
         qty = int(item.get("qty", 0))
-        # Nom uzun bo'lsa qisqartirish
-        max_name_len = max(10, r.line_chars - 6)
-        r.add_line(name[:max_name_len], f"x{qty}")
+        # Big mode da char width 2x — sig'imni hisoblash
+        max_name_len = max(10, (r.line_chars // 2) - 5)
+        # Mahsulot nomi va soni — har biri big
+        r.add_center(f"{name[:max_name_len]}  x{qty}", big=True)
 
     r.add_separator("=")
 
+    # ── Izoh ──
     comment = order_data.get("comment", "")
     if comment:
-        r.add_text(f"IZOH: {comment}")
+        r.add_center("IZOH:")
+        chunk = max(15, r.line_chars - 2)
+        for i in range(0, len(comment), chunk):
+            r.add_center(comment[i:i + chunk])
+        r.add_separator("-")
 
     return r.build()
 
@@ -417,52 +476,63 @@ def build_cancel_production_receipt(
     cancel_reason: str,
     printer_cfg: dict = None,
 ) -> bytes:
-    """Bekor qilingan buyurtma uchun production stiker."""
+    """Bekor qilingan buyurtma uchun production stiker — katta diqqat."""
     r = _make_receipt(printer_cfg)
-    r.add_center(f"--- {unit_name} ---")
+
     r.add_separator("*")
-    r.add_center("!! QAYTARILDI !!", big=True)
+    r.add_center("BEKOR QILINDI", big=True)
+    r.add_center("QAYTARILSIN", big=True)
     r.add_separator("*")
 
+    r.add_center(unit_name.upper(), big=True)
+    r.add_separator("=")
+
     order_type = order_data.get("order_type", "")
-    r.add_center(order_type)
-    r.add_center(datetime.now().strftime("%H:%M:%S"))
+    r.add_center(_order_type_label(order_type))
+    r.add_center(datetime.now().strftime("%H:%M"))
 
     ticket_number = order_data.get("ticket_number", "")
     if ticket_number:
-        r.add_center(f"Stiker №{ticket_number}")
+        r.add_separator("-")
+        r.add_center(f"Stiker №{ticket_number}", big=True)
+        r.add_separator("-")
 
-    r.add_separator("=")
+    r.add_text("Bekor qilingan mahsulotlar:")
+    r.add_separator("-")
 
     for item in unit_items:
         name = item.get("item_name", item.get("name", ""))
         qty = int(item.get("qty", 0))
-        max_name_len = max(10, r.line_chars - 6)
-        r.add_line(name[:max_name_len], f"x{qty}")
+        max_name_len = max(10, (r.line_chars // 2) - 5)
+        r.add_center(f"{name[:max_name_len]}  x{qty}", big=True)
 
     r.add_separator("=")
 
     if cancel_reason:
-        r.add_text("SABAB:")
-        chunk = max(15, r.line_chars - 4)
+        r.add_text("Bekor qilish sababi:")
+        chunk = max(15, r.line_chars - 2)
         for i in range(0, len(cancel_reason), chunk):
             r.add_text("  " + cancel_reason[i:i + chunk])
+        r.add_separator("-")
 
-    r.add_separator("-")
     return r.build()
 
 
 def build_test_receipt(printer_name: str = "Test", printer_cfg: dict = None) -> bytes:
     r = _make_receipt(printer_cfg)
+    r.add_separator("=")
     r.add_center("SINOV CHEKI", big=True)
+    r.add_separator("=")
     r.add_center(f"Printer: {printer_name}")
-    r.add_center(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
-    r.add_separator("=")
+    r.add_center(_format_uz_datetime())
+    r.add_separator("-")
     cfg = {**DEFAULT_PRINTER_CFG, **(printer_cfg or {})}
-    r.add_text(f"Driver: {cfg.get('driver')}")
-    r.add_text(f"Kenglik: {cfg.get('width_mm')} mm")
+    r.add_line("Protokol:", str(cfg.get("driver", "")).upper())
+    r.add_line("Kenglik:", f"{cfg.get('width_mm')} mm")
+    r.add_line("Kodirovka:", str(cfg.get("codepage", "")).upper())
     r.add_separator("=")
-    r.add_center("OK!")
+    r.add_center("Sinov muvaffaqiyatli!", big=True)
+    r.add_center("Kirill: Гуляш, Чой")
     return r.build()
 
 
@@ -472,65 +542,75 @@ def build_cash_drawer_command(printer_cfg: dict = None) -> bytes:
 
 
 def build_z_report_receipt(report_data: dict, printer_cfg: dict = None) -> bytes:
-    """Z-otchyot (smena yopilishi)."""
+    """Smena yakuni hisoboti (Z-hisobot) — to'liq o'zbekcha terminologiya."""
     r = _make_receipt(printer_cfg)
 
+    # ── HEADER ──
     terminal = report_data.get("terminal_name", "JAZIRA POS")
-    r.add_center(terminal)
-    r.add_center("Z-OTCHYOT", big=True)
+    r.add_separator("=")
+    r.add_center(terminal.upper(), big=True)
+    r.add_center("SMENA YAKUNI", big=True)
     r.add_separator("=")
 
-    r.add_line("Smena:", str(report_data.get("shift_id", "—"))[-20:])
+    # ── Smena ma'lumotlari ──
+    r.add_line("Smena ID:", str(report_data.get("shift_id", "—"))[-20:])
     r.add_line("Kassir:", report_data.get("cashier", "—"))
-    r.add_line("Ochildi:", report_data.get("opened_at", "—"))
-    r.add_line("Yopildi:", report_data.get("closed_at", "—"))
-    r.add_line("Cheklar:", str(report_data.get("total_invoices", 0)))
+    r.add_line("Boshlandi:", report_data.get("opened_at", "—"))
+    r.add_line("Yakunlandi:", report_data.get("closed_at", "—"))
+    r.add_line("Cheklar soni:", str(report_data.get("total_invoices", 0)))
+
+    # ── TO'LOV TURLARI ──
+    r.add_separator("=")
+    r.add_center("TO'LOV TURLARI", big=True)
     r.add_separator("=")
 
-    r.add_center("TO'LOV TURLARI")
-    r.add_separator("-")
-
-    _CASH_KEYS = {"cash", "naqd", "naqd pul"}
     for p in report_data.get("payments", []):
         mop = p.get("mode_of_payment", "")
         expected = float(p.get("expected_amount", 0))
-        is_cash = mop.lower().strip() in _CASH_KEYS
+        is_cash = _is_cash_payment(mop)
         r.add_text(f"{mop}:")
         r.add_line("  Sotuv:", f"{_format_amount(expected)} UZS")
         if is_cash:
-            r.add_line("  Qaytarish:", "0 UZS")
+            r.add_line("  Qaytarilgan:", "0 UZS")
 
     r.add_separator("-")
-    r.add_line("SOTUV:", f"{_format_amount(report_data.get('total_sales', 0))} UZS")
+    total_sales = report_data.get("total_sales", 0)
+    r.add_center(f"JAMI SOTUV: {_format_amount(total_sales)} UZS", big=True)
+
+    # ── KASSA NAZORATI ──
     r.add_separator("=")
-
-    r.add_center("NAZORAT SANOG'I")
-    r.add_separator("-")
+    r.add_center("KASSA NAZORATI", big=True)
+    r.add_separator("=")
 
     expected_cash = float(report_data.get("expected_cash", 0))
     actual_cash = float(report_data.get("actual_cash", 0))
     cash_diff = float(report_data.get("cash_diff", 0))
 
-    r.add_line("Kassada kerak:", f"{_format_amount(expected_cash)}")
-    r.add_line("Sanaldi:", f"{_format_amount(actual_cash)}")
+    r.add_line("Bo'lishi kerak:", f"{_format_amount(expected_cash)} UZS")
+    r.add_line("Hisoblandi:", f"{_format_amount(actual_cash)} UZS")
     r.add_separator("-")
 
     if abs(cash_diff) < 1:
-        r.add_line("Farq:", "0  OK")
+        r.add_center("Farq yo'q ✓", big=True)
     elif cash_diff < 0:
-        r.add_line("KAMOMAD:", f"-{_format_amount(abs(cash_diff))} !")
+        r.add_center(f"FARQ: -{_format_amount(abs(cash_diff))} UZS", big=True)
+        r.add_center("(KAM)")
     else:
-        r.add_line("Ortiqcha:", f"+{_format_amount(cash_diff)}")
+        r.add_center(f"FARQ: +{_format_amount(cash_diff)} UZS", big=True)
+        r.add_center("(ORTIQCHA)")
 
+    # ── NAQD OLINGAN ──
     r.add_separator("=")
-    r.add_center("PUL YECHISH")
-    r.add_separator("-")
-    r.add_line("Tur:", "Smena yopilishi")
+    r.add_center("NAQD OLINGAN", big=True)
+    r.add_separator("=")
+    r.add_line("Tur:", "Smena yakuni")
     r.add_line("Summa:", f"{_format_amount(actual_cash)} UZS")
     r.add_line("Kassir:", report_data.get("cashier", "—"))
-    r.add_separator("=")
 
-    r.add_center("Smena yopildi!")
+    # ── FOOTER ──
+    r.add_separator("=")
+    r.add_center("Smena yakunlandi!", big=True)
     r.add_center(report_data.get("closed_at", "—"))
+    r.add_separator("=")
 
     return r.build()

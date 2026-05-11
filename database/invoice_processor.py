@@ -92,6 +92,9 @@ def process_cancel_pending_invoice(api, invoice) -> tuple[str, str]:
         cancel_reason = payload.pop("_cancel_reason", "Oflayn bekor qilindi")
         saved_payments = payload.pop("_payments", None)
         existing_order_name = payload.pop("_sync_order_name", None)
+        # Idempotency key fallback (eski yozuvlar uchun)
+        if not payload.get("client_ref") and invoice.offline_id:
+            payload["client_ref"] = invoice.offline_id
         ensure_mandatory_fields(payload)
         if "order_type" in payload:
             payload["order_type"] = ORDER_TYPE_MAP.get(payload["order_type"], payload["order_type"])
@@ -156,6 +159,11 @@ def process_pending_invoice(api, invoice) -> tuple[str, str]:
         payload = json.loads(invoice.invoice_data)
         saved_payments = payload.pop("_payments", None)
         existing_order_name = payload.pop("_sync_order_name", None)
+        # Idempotency key: payload da yo'q bo'lsa, offline_id ni ishlatamiz.
+        # Server bir xil UUID ni qabul qilsa, mavjud invoice ni qaytaradi —
+        # duplikat POS Invoice yaratilmaydi.
+        if not payload.get("client_ref") and invoice.offline_id:
+            payload["client_ref"] = invoice.offline_id
         ensure_mandatory_fields(payload)
         if "order_type" in payload:
             payload["order_type"] = ORDER_TYPE_MAP.get(payload["order_type"], payload["order_type"])

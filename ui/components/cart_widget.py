@@ -212,8 +212,8 @@ class CartWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(1, s(176))
-        self.table.setColumnWidth(2, s(112))
-        self.table.setColumnWidth(3, s(124))
+        self.table.setColumnWidth(2, s(140))
+        self.table.setColumnWidth(3, s(150))
         main_layout.addWidget(self.table)
 
         # Touch scroll — sensorli ekranda barmaq bilan surish

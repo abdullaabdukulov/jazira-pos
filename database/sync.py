@@ -43,7 +43,20 @@ class SyncWorker(QThread):
                 self.sync_finished.emit(True, "Sinxronizatsiya muvaffaqiyatli yakunlandi!")
         except Exception as e:
             logger.error("Sinxronizatsiya xatosi: %s", e)
-            self.sync_finished.emit(False, str(e))
+            # Foydalanuvchiga tushunarli xabar
+            err_str = str(e).lower()
+            if any(k in err_str for k in (
+                "name resolution", "nameresolution",
+                "connection", "timed out", "max retries",
+                "network is unreachable", "no route",
+            )):
+                user_msg = (
+                    "Internet bilan aloqa yo'q. "
+                    "Saqlangan ma'lumotlar bilan oflayn ishlash mumkin."
+                )
+            else:
+                user_msg = str(e)
+            self.sync_finished.emit(False, user_msg)
         finally:
             # Worker thread tugayotganda o'z DB ulanishini yopish
             # (boshqa threadlarga ta'sir qilmaydi — har bir thread o'z ulanishiga ega)
@@ -197,6 +210,8 @@ class SyncWorker(QThread):
                     course=item_data.get("course", ""),
                     image=item_data.get("item_image"),
                     uom=DEFAULT_UOM,
+                    sales_count=int(item_data.get("sales_count") or 0),
+                    top_level=int(item_data.get("top_level") or 0),
                 ).on_conflict_replace().execute()
 
                 ItemPrice.insert(

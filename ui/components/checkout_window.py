@@ -26,7 +26,11 @@ class CheckoutWorker(QThread):
 
     def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI):
         super().__init__()
-        self.invoice_data = invoice_data
+        # Idempotency key — offline_id (UUID) ni server tomonga `client_ref` sifatida
+        # jo'natamiz. Server bir xil UUID bilan kelgan sync_order so'rovini
+        # bitta POS Invoice ga ulaydi (tarmoq response yo'qolsa ham duplikat yo'q).
+        self.invoice_data = dict(invoice_data)
+        self.invoice_data["client_ref"] = offline_id
         self.payments = payments
         self.offline_id = offline_id
         self.api = api
