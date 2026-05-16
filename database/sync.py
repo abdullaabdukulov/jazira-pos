@@ -3,7 +3,7 @@ from core.api import FrappeAPI
 from core.config import load_config, save_config
 from core.logger import get_logger
 from core.constants import CUSTOMER_SYNC_LIMIT, DEFAULT_CURRENCY, DEFAULT_CUSTOMER, DEFAULT_UOM
-from database.models import Item, Customer, ItemPrice, PendingInvoice, db
+from database.models import Item, Customer, ItemPrice, Room, RestaurantTable, PendingInvoice, db
 from database.invoice_processor import process_pending_invoice, process_cancel_pending_invoice
 
 logger = get_logger(__name__)
@@ -27,6 +27,7 @@ class SyncWorker(QThread):
             self._sync_printer_config()
             items_ok = self._sync_items()
             customers_ok = self._sync_customers()
+            self._sync_tables_and_rooms()
 
             warnings = []
             config = load_config()
@@ -143,6 +144,7 @@ class SyncWorker(QThread):
 
         save_config({
             "pos_profile": pos_profile_name,
+            "branch": pos_data.get("branch", ""),
             "cashier": pos_data.get("cashier") or logged_user,
             "owner": logged_user,
             "company": pos_data.get("company"),
@@ -156,6 +158,7 @@ class SyncWorker(QThread):
             "show_history":  pos_data.get("show_history", 1),
             "show_shifts":   pos_data.get("show_shifts", 1),
             "enabled_order_types": enabled_order_types,
+            "order_number_type": pos_data.get("order_number_type", "Stiker"),
             "item_columns":    pos_data.get("item_columns", 0),
             "company_logo":    pos_data.get("company_logo", ""),
             "receipt_footer":  pos_data.get("receipt_footer", ""),
@@ -292,5 +295,67 @@ class SyncWorker(QThread):
             "customer_printer='%s'",
             units_count, cp_name,
         )
+
+    def _sync_tables_and_rooms(self):
+        """Stollar va xonalarni serverdan sinxronlash.
+
+        Faqat order_number_type=Stol bo'lganda bajariladi (Stiker rejimida
+        URY Table jadvali ishlatilmaydi). Tarmoq tejash uchun.
+        """
+        config = load_config()
+        if config.get("order_number_type") != "Stol":
+            logger.debug("Stol rejimi yoqilmagan — stol sinxronlash o'tkazib yuborildi")
+            return
+
+        branch = config.get("branch", "")
+        self.progress_update.emit("Xonalar va stollar yuklanmoqda...")
+
+        # Xonalar
+        ok_rooms, rooms = self.api.call_method(
+            "ury.ury_pos.api.getRoomsForBranch", {"branch": branch}
+        )
+        if ok_rooms and isinstance(rooms, list):
+            server_names = {r.get("name") for r in rooms if r.get("name")}
+            with db.atomic():
+                for r in rooms:
+                    Room.insert(
+                        name=r.get("name"),
+                        branch=r.get("branch", ""),
+                        room_type=r.get("room_type", ""),
+                    ).on_conflict_replace().execute()
+                if server_names:
+                    Room.delete().where(Room.name.not_in(server_names)).execute()
+            logger.info("%d ta xona sinxronlandi", len(rooms))
+        else:
+            logger.warning("Xonalar olinmadi: %s", rooms)
+
+        # Stollar
+        ok_tables, tables = self.api.call_method(
+            "ury.ury_pos.api.getTables", {"branch": branch}
+        )
+        if ok_tables and isinstance(tables, list):
+            server_names = {t.get("name") for t in tables if t.get("name")}
+            with db.atomic():
+                for t in tables:
+                    RestaurantTable.insert(
+                        name=t.get("name"),
+                        restaurant_room=t.get("restaurant_room") or "",
+                        no_of_seats=int(t.get("no_of_seats") or 0),
+                        occupied=bool(t.get("occupied")),
+                        is_take_away=bool(t.get("is_take_away")),
+                        latest_invoice_time=str(t.get("latest_invoice_time") or ""),
+                        layout_x=float(t.get("layout_x") or 0),
+                        layout_y=float(t.get("layout_y") or 0),
+                        layout_width=float(t.get("layout_width") or 0),
+                        layout_height=float(t.get("layout_height") or 0),
+                        table_shape=t.get("table_shape") or "",
+                    ).on_conflict_replace().execute()
+                if server_names:
+                    RestaurantTable.delete().where(
+                        RestaurantTable.name.not_in(server_names)
+                    ).execute()
+            logger.info("%d ta stol sinxronlandi", len(tables))
+        else:
+            logger.warning("Stollar olinmadi: %s", tables)
 
 

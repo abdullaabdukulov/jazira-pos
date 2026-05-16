@@ -49,6 +49,34 @@ class ItemPrice(BaseModel):
     last_sync = DateTimeField(default=datetime.datetime.now)
 
 
+class Room(BaseModel):
+    """URY Room — filial ichidagi xona. Stol rejimida ishlatiladi."""
+    name = CharField(unique=True, index=True)
+    branch = CharField(null=True)
+    room_type = CharField(null=True)  # AC / NON-AC
+    last_sync = DateTimeField(default=datetime.datetime.now)
+
+
+class RestaurantTable(BaseModel):
+    """URY Table — restorandagi stol. Stol rejimida TablePicker ko'rsatadi.
+
+    Model nomi `RestaurantTable` chunki `table` SQL reserved word va peewee
+    `Table` klassi ham mavjud. SQLite tabel nomi: `restauranttable`.
+    """
+    name = CharField(unique=True, index=True)             # URY Table.name
+    restaurant_room = CharField(null=True, index=True)
+    no_of_seats = IntegerField(default=0)
+    occupied = BooleanField(default=False)
+    is_take_away = BooleanField(default=False)
+    latest_invoice_time = CharField(null=True)
+    layout_x = FloatField(default=0)
+    layout_y = FloatField(default=0)
+    layout_width = FloatField(default=0)
+    layout_height = FloatField(default=0)
+    table_shape = CharField(null=True)
+    last_sync = DateTimeField(default=datetime.datetime.now)
+
+
 class PendingInvoice(BaseModel):
     offline_id = CharField(null=True, index=True)
     invoice_data = TextField()
@@ -74,4 +102,4 @@ class SchemaVersion(BaseModel):
     description = CharField(default="")
 
 
-ALL_MODELS = [Item, Customer, ItemPrice, PendingInvoice, PosShift, SchemaVersion]
+ALL_MODELS = [Item, Customer, ItemPrice, Room, RestaurantTable, PendingInvoice, PosShift, SchemaVersion]

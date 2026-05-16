@@ -32,6 +32,33 @@ MIGRATIONS = [
         "ALTER TABLE item ADD COLUMN top_level INTEGER DEFAULT 0;",
         "CREATE INDEX IF NOT EXISTS idx_item_sales_count ON item(sales_count);",
     ]),
+    (6, "Create room and restauranttable tables for Stol order_number_type mode", [
+        """CREATE TABLE IF NOT EXISTS room (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name VARCHAR(255) UNIQUE NOT NULL,
+            branch VARCHAR(255),
+            room_type VARCHAR(50),
+            last_sync DATETIME DEFAULT CURRENT_TIMESTAMP
+        );""",
+        "CREATE INDEX IF NOT EXISTS idx_room_name ON room(name);",
+        """CREATE TABLE IF NOT EXISTS restauranttable (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name VARCHAR(255) UNIQUE NOT NULL,
+            restaurant_room VARCHAR(255),
+            no_of_seats INTEGER DEFAULT 0,
+            occupied INTEGER DEFAULT 0,
+            is_take_away INTEGER DEFAULT 0,
+            latest_invoice_time VARCHAR(50),
+            layout_x REAL DEFAULT 0,
+            layout_y REAL DEFAULT 0,
+            layout_width REAL DEFAULT 0,
+            layout_height REAL DEFAULT 0,
+            table_shape VARCHAR(50),
+            last_sync DATETIME DEFAULT CURRENT_TIMESTAMP
+        );""",
+        "CREATE INDEX IF NOT EXISTS idx_restauranttable_name ON restauranttable(name);",
+        "CREATE INDEX IF NOT EXISTS idx_restauranttable_room ON restauranttable(restaurant_room);",
+    ]),
 ]
 
 

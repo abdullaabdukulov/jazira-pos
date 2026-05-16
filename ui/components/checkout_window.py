@@ -514,6 +514,8 @@ class CheckoutWindow(QDialog):
             "total_amount": float(self.total_amount),
             "custom_offline_id": self.offline_id,
             "active_cashier": str(self.order_data.get("active_cashier", "")),
+            "active_cashier_role": str(self.order_data.get("active_cashier_role", "Kassir")),
+            "table": (str(self.order_data.get("restaurant_table", "")) or None),
         }
         # MANA SHU YERDA QO'SHASIZ:
         import json
