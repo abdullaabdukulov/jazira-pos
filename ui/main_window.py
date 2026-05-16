@@ -16,6 +16,9 @@ from ui.components.cart_widget import CartWidget
 from ui.components.checkout_window import CheckoutWindow
 from ui.components.history_window import HistoryWindow
 from ui.components.offline_queue_window import OfflineQueueWindow
+from ui.components.pending_orders_window import PendingOrdersWindow
+from ui.components.table_picker import TablePickerDialog
+from ui.components.save_order_worker import SaveOrderWorker
 from ui.components.pos_opening import PosOpeningPage
 from ui.components.pos_closing import PosClosingDialog
 from ui.components.pos_shifts_window import PosShiftsWindow
@@ -275,6 +278,12 @@ class MainWindow(QMainWindow):
         self.offline_btn.clicked.connect(self.show_offline_queue)
         top_bar.addWidget(self.offline_btn)
 
+        # TZ 4.2 — To'lov kutilmoqda
+        self.pending_btn = _tb_btn("To'lov kutilmoqda: 0", "ghost")
+        self.pending_btn.setIcon(icon_clock())
+        self.pending_btn.clicked.connect(self.show_pending_orders)
+        top_bar.addWidget(self.pending_btn)
+
         self.add_sale_btn = _tb_btn("Yangi sotuv", "primary")
         self.add_sale_btn.setIcon(icon_plus())
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
@@ -368,6 +377,16 @@ class MainWindow(QMainWindow):
         self.offline_panel.setStyleSheet("background: white; border-top: 2px solid #e2e8f0;")
         main_layout.addWidget(self.offline_panel)
 
+        # ─ Inline Pending Orders Panel ───────────
+        self.pending_panel = PendingOrdersWindow(self.api, self)
+        self.pending_panel.setVisible(False)
+        self.pending_panel.setMinimumHeight(s(320))
+        self.pending_panel.setMaximumHeight(s(460))
+        self.pending_panel.setStyleSheet("background: white; border-top: 2px solid #e2e8f0;")
+        self.pending_panel.pay_requested.connect(self._on_pending_pay_requested)
+        self.pending_panel.count_changed.connect(self._on_pending_count_changed)
+        main_layout.addWidget(self.pending_panel)
+
         # Status bar
         status_bar = self.statusBar()
         self._sync_spinner = InlineSpinner(size=16, color="#3b82f6", parent=self)
@@ -390,17 +409,31 @@ class MainWindow(QMainWindow):
         """)
 
     def _update_cashier_badge(self, cashier: str = ""):
-        # active_cashier mavjud bo'lsa — uning full_name ni ko'rsat
+        # active_cashier mavjud bo'lsa — uning full_name + role ni ko'rsat
+        role = ""
         if self.active_cashier:
             display = self.active_cashier.get("full_name") or self.active_cashier.get("name", "")
+            role = self.active_cashier.get("role") or "Kassir"
         elif cashier:
             # Fallback: ERPNext foydalanuvchi nomi (kassirlar yo'q holatda)
             display = cashier.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+            role = "Kassir"
         else:
             display = "—"
-        self.cashier_badge.setText(display)
+
+        if role:
+            self.cashier_badge.setText(f"{display}  ·  {role}")
+        else:
+            self.cashier_badge.setText(display)
+
+        # Rol asosida rang: Kassir=ko'k, Ofitsant=binafsha
+        if role == "Ofitsant":
+            color = "#7c3aed"  # binafsha
+        else:
+            color = "#0369a1"  # ko'k
+
         self.cashier_badge.setStyleSheet(f"""
-            font-size: {font(13)}px; font-weight: 800; color: #0369a1;
+            font-size: {font(13)}px; font-weight: 800; color: {color};
             background: transparent;
         """)
 
@@ -409,6 +442,15 @@ class MainWindow(QMainWindow):
         if self.active_cashier:
             return self.active_cashier.get("full_name") or self.active_cashier.get("name", "")
         return ""
+
+    def get_active_cashier_role(self) -> str:
+        """Faol kassirning roli (Kassir/Ofitsant). Default: Kassir."""
+        if self.active_cashier:
+            return self.active_cashier.get("role") or "Kassir"
+        return "Kassir"
+
+    def is_waiter(self) -> bool:
+        return self.get_active_cashier_role() == "Ofitsant"
 
     # ── Background workers ───────────────────────────
     def _start_background_workers(self):
@@ -485,6 +527,8 @@ class MainWindow(QMainWindow):
         else:
             self.history_panel.setVisible(False)
             self.shifts_panel.setVisible(False)
+            if hasattr(self, "pending_panel"):
+                self.pending_panel.setVisible(False)
             self.offline_panel.setVisible(True)
             self.offline_panel.load_pending()
 
@@ -492,6 +536,9 @@ class MainWindow(QMainWindow):
         tab_count = self.sales_tabs.count()
         new_cart = CartWidget()
         new_cart.checkout_requested.connect(self.on_checkout)
+        new_cart.save_requested.connect(self.on_save_order)            # TZ 4.2
+        new_cart.table_pick_requested.connect(lambda: self.open_table_picker(new_cart))
+        new_cart.set_role(self.get_active_cashier_role())               # TZ 4.3
         new_cart.apply_settings()
         tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
         self.sales_tabs.setCurrentIndex(tab_index)
@@ -519,6 +566,7 @@ class MainWindow(QMainWindow):
 
     def on_checkout(self, order_data: dict):
         order_data["active_cashier"] = self.get_active_cashier_name()
+        order_data["active_cashier_role"] = self.get_active_cashier_role()
         dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)
         dialog.exec()
@@ -528,6 +576,106 @@ class MainWindow(QMainWindow):
         if active_cart:
             active_cart.clear_cart()
         self._update_offline_queue_count()
+        # Pending count yangilash
+        if hasattr(self, "pending_panel"):
+            self.pending_panel.load_pending()
+
+    # ── TZ 4.2: To'lovsiz saqlash ─────────────────
+    def on_save_order(self, order_data: dict):
+        order_data["active_cashier"] = self.get_active_cashier_name()
+        order_data["active_cashier_role"] = self.get_active_cashier_role()
+        self._save_worker = SaveOrderWorker(
+            order_data, self.api, role=self.get_active_cashier_role()
+        )
+        self._save_worker.result_ready.connect(self._on_save_done)
+        self._save_worker.start()
+        # UI feedback
+        self.status_label.setText("Buyurtma saqlanmoqda...")
+
+    def _on_save_done(self, success: bool, message: str, invoice_name: str):
+        self.status_label.setText(message)
+        if success:
+            InfoDialog(self, "Saqlandi", message, kind="success").exec()
+            active_cart = self.sales_tabs.currentWidget()
+            if active_cart:
+                active_cart.clear_cart()
+            # Pending list yangilash
+            if hasattr(self, "pending_panel"):
+                self.pending_panel.load_pending()
+        else:
+            # Ofitsant rolida tarmoq xatosi bo'lsa Phase 2 da blok overlay chiqadi
+            InfoDialog(self, "Xatolik", message, kind="error").exec()
+
+    # ── TZ 4.1: Stol picker ─────────────────────
+    def open_table_picker(self, cart: CartWidget):
+        cfg = load_config()
+        current_tbl = (cart.selected_table or {}).get("name", "")
+        dlg = TablePickerDialog(self, self.api, current_table=current_tbl)
+        if dlg.exec():
+            if dlg.selected_table:
+                cart.set_selected_table(dlg.selected_table)
+
+    # ── TZ 4.2: To'lov kutilmoqda panel ──────────
+    def show_pending_orders(self):
+        visible = self.pending_panel.isVisible()
+        if visible:
+            self.pending_panel.setVisible(False)
+            return
+        # Boshqa panellarni yopish
+        self.history_panel.setVisible(False)
+        self.shifts_panel.setVisible(False)
+        self.offline_panel.setVisible(False)
+        # Role + name set
+        self.pending_panel.set_role_and_name(
+            self.get_active_cashier_role(),
+            self.get_active_cashier_name(),
+        )
+        self.pending_panel.setVisible(True)
+        self.pending_panel.load_pending()
+
+    def _on_pending_pay_requested(self, detail: dict):
+        """Pending listdan 💰 To'lov bossadi — CheckoutWindow ochiladi."""
+        order_data = {
+            "items": [
+                {
+                    "item_code": i.get("item_code", ""),
+                    "name": i.get("item_name", ""),
+                    "price": float(i.get("rate", 0)),
+                    "qty": int(i.get("qty", 0)),
+                    "currency": "UZS",
+                }
+                for i in detail.get("items", [])
+            ],
+            "total_amount": float(detail.get("grand_total") or detail.get("rounded_total") or 0),
+            "order_type": detail.get("order_type", ""),
+            "ticket_number": detail.get("custom_ticket_number", ""),
+            "restaurant_table": detail.get("restaurant_table", ""),
+            "customer": detail.get("customer", ""),
+            "comment": detail.get("custom_comments", ""),
+            "active_cashier": self.get_active_cashier_name(),
+            "active_cashier_role": self.get_active_cashier_role(),
+            "existing_invoice": detail.get("name", ""),     # CheckoutWorker buni inobatga oladi (Phase 3)
+        }
+        dialog = CheckoutWindow(self, order_data, self.api)
+        dialog.checkout_completed.connect(self.on_checkout_completed)
+        dialog.exec()
+
+    def _on_pending_count_changed(self, count: int):
+        """Top-bar tugmasini yangilash."""
+        if hasattr(self, "pending_btn"):
+            self.pending_btn.setText(f"To'lov kutilmoqda: {count}")
+            if count > 0:
+                self.pending_btn.setStyleSheet(f"""
+                    QPushButton {{ background: #fff7ed; color: #c2410c; font-weight: 700;
+                        font-size: {font(13)}px; border-radius: {s(10)}px;
+                        border: 2px solid #fdba74; padding: 0 {s(16)}px; }}
+                    QPushButton:hover {{ background: #ffedd5; }}
+                """)
+            else:
+                self.pending_btn.setStyleSheet(_BTN_STYLE.format(
+                    bg="#f8fafc", fg="#475569", hover="#e2e8f0",
+                    border="1px solid #e2e8f0", fs=font(13), r=s(10), px=s(16),
+                ))
 
     # ── History / Shifts ─────────────────────────────
     def show_shifts_history(self):
@@ -537,12 +685,16 @@ class MainWindow(QMainWindow):
         else:
             self.history_panel.setVisible(False)
             self.offline_panel.setVisible(False)
+            if hasattr(self, "pending_panel"):
+                self.pending_panel.setVisible(False)
             self.shifts_panel.setVisible(True)
             self.shifts_panel.load_shifts()
 
     def show_history(self):
         self.shifts_panel.setVisible(False)
         self.offline_panel.setVisible(False)
+        if hasattr(self, "pending_panel"):
+            self.pending_panel.setVisible(False)
         visible = self.history_panel.isVisible()
         if visible:
             self.history_panel.setVisible(False)

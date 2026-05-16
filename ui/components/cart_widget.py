@@ -10,7 +10,10 @@ from PyQt6.QtGui import QColor
 from database.models import Customer, db
 from core.logger import get_logger
 from core.config import load_config
-from core.constants import TICKET_ORDER_TYPES, ORDER_TYPES
+from core.constants import (
+    TICKET_ORDER_TYPES, TABLE_ORDER_TYPES, ORDER_TYPES,
+    ORDER_NUMBER_TYPE_STICKER, ORDER_NUMBER_TYPE_TABLE,
+)
 from ui.components.keyboard import TouchKeyboard
 from ui.components.dialogs import InfoDialog
 from ui.scale import s, font
@@ -27,6 +30,8 @@ class QtyLabel(QLabel):
 
 class CartWidget(QWidget):
     checkout_requested = pyqtSignal(dict)
+    save_requested = pyqtSignal(dict)          # TZ 4.2 — To'lovsiz saqlash
+    table_pick_requested = pyqtSignal()        # MainWindow stol pickerni ochishi uchun
 
     def __init__(self):
         super().__init__()
@@ -36,6 +41,8 @@ class CartWidget(QWidget):
         self.order_type_buttons = {}
         self._numpad_mode = "ticket"
         self._active_qty_item = None
+        self.selected_table: dict | None = None    # {"name", "room", "seats", "is_take_away"}
+        self._role = "Kassir"                       # Default rol, set_role() bilan yangilanadi
         self.init_ui()
         self.load_customers()
 
@@ -100,7 +107,7 @@ class CartWidget(QWidget):
         middle_row = QHBoxLayout()
         middle_row.setSpacing(s(10))
 
-        # Stiker container
+        # Stiker container (Stiker rejimi uchun)
         self._ticket_container = QWidget()
         self._ticket_container.setStyleSheet("background: transparent;")
         sticker_vbox = QVBoxLayout(self._ticket_container)
@@ -119,6 +126,23 @@ class CartWidget(QWidget):
         sticker_vbox.addWidget(sticker_label)
         sticker_vbox.addWidget(self.ticket_input)
         middle_row.addWidget(self._ticket_container, 1)
+
+        # Stol container (Stol rejimi uchun) — TZ 4.1.7
+        self._table_container = QWidget()
+        self._table_container.setStyleSheet("background: transparent;")
+        table_vbox = QVBoxLayout(self._table_container)
+        table_vbox.setContentsMargins(0, 0, 0, 0)
+        table_vbox.setSpacing(s(2))
+        table_label = QLabel("STOL")
+        table_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        self.table_button = QPushButton("Stol tanlash...")
+        self.table_button.setFixedHeight(s(55))
+        self.table_button.setStyleSheet(self._table_btn_style(False))
+        self.table_button.clicked.connect(lambda: self.table_pick_requested.emit())
+        table_vbox.addWidget(table_label)
+        table_vbox.addWidget(self.table_button)
+        middle_row.addWidget(self._table_container, 1)
+        self._table_container.setVisible(False)  # default Stiker — apply_settings ochadi
 
         # Mijoz container
         self._customer_container = QWidget()
@@ -268,7 +292,30 @@ class CartWidget(QWidget):
         totals_layout.addWidget(self.clear_btn)
         main_layout.addWidget(totals_card)
 
-        # ── Checkout Button ──────────────────
+        # ── Action Buttons (Saqlash + Checkout) ──
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(s(8))
+
+        # Saqlash tugmasi — to'lovsiz buyurtma (TZ 4.2.1)
+        self.save_btn = QPushButton("💾  SAQLASH")
+        self.save_btn.setFixedHeight(s(72))
+        self.save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #6366f1, stop:1 #4f46e5);
+                color: white; font-size: {font(18)}px;
+                font-weight: 800; border-radius: {s(14)}px;
+                letter-spacing: 1px;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #4f46e5, stop:1 #4338ca);
+            }}
+            QPushButton:pressed {{ background: #3730a3; }}
+        """)
+        self.save_btn.clicked.connect(self.handle_save)
+        actions_row.addWidget(self.save_btn, 2)
+
         self.checkout_btn = QPushButton("TO'LOV QILISH  (F12)")
         self.checkout_btn.setFixedHeight(s(72))
         self.checkout_btn.setStyleSheet(f"""
@@ -286,7 +333,9 @@ class CartWidget(QWidget):
             QPushButton:pressed {{ background: #15803d; }}
         """)
         self.checkout_btn.clicked.connect(self.handle_checkout)
-        main_layout.addWidget(self.checkout_btn)
+        actions_row.addWidget(self.checkout_btn, 3)
+
+        main_layout.addLayout(actions_row)
 
         # ── Inline bottom panels ─────────────
         self.numpad_panel = self._build_numpad_panel()
@@ -532,6 +581,32 @@ class CartWidget(QWidget):
         """
 
     @staticmethod
+    def _table_btn_style(selected: bool) -> str:
+        if selected:
+            return f"""
+                QPushButton {{
+                    padding: {s(10)}px {s(14)}px; font-size: {font(15)}px;
+                    font-weight: 700; border-radius: {s(10)}px;
+                    background: #eff6ff; color: #1e40af;
+                    border: 2px solid #3b82f6;
+                    text-align: left;
+                }}
+                QPushButton:hover {{ background: #dbeafe; }}
+            """
+        return f"""
+            QPushButton {{
+                padding: {s(10)}px {s(14)}px; font-size: {font(15)}px;
+                font-weight: 600; border-radius: {s(10)}px;
+                background: white; color: #64748b;
+                border: 1.5px solid #e2e8f0;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background: #eff6ff; color: #2563eb; border-color: #bfdbfe;
+            }}
+        """
+
+    @staticmethod
     def _input_style() -> str:
         return f"""
             QLineEdit, QComboBox {{
@@ -566,9 +641,9 @@ class CartWidget(QWidget):
         if enabled_order_types is None:
             enabled_order_types = cfg.get("enabled_order_types") or ORDER_TYPES
 
-        self._ticket_container.setVisible(show_ticket)
         self._customer_container.setVisible(show_customer)
         self._comment_container.setVisible(show_comment)
+        self._show_ticket_setting = show_ticket  # set_order_type ishlatadi
 
         # Buyurtma turi tugmalari
         for t, btn in self.order_type_buttons.items():
@@ -577,6 +652,9 @@ class CartWidget(QWidget):
         # Faol order type enabled_order_types ichida bo'lishi shart
         if self.current_order_type not in enabled_order_types and enabled_order_types:
             self.set_order_type(enabled_order_types[0])
+        else:
+            # Stiker/Stol container visibility ni hozirgi order_type bo'yicha yangilash
+            self.set_order_type(self.current_order_type)
 
     def set_order_type(self, order_type: str):
         self.current_order_type = order_type
@@ -585,14 +663,53 @@ class CartWidget(QWidget):
             btn.setChecked(active)
             btn.setStyleSheet(self._order_type_style(active))
 
-        needs_ticket = order_type in TICKET_ORDER_TYPES
-        self.ticket_input.setEnabled(needs_ticket)
-        if not needs_ticket:
+        cfg = load_config()
+        order_number_type = cfg.get("order_number_type", ORDER_NUMBER_TYPE_STICKER)
+        show_ticket_cfg = getattr(self, "_show_ticket_setting",
+                                  bool(cfg.get("show_ticket", 1)))
+
+        # Stol rejimi: Stol tugmasi faqat Shu yerda uchun, Saboy stolsiz (TZ 4.1.1)
+        if order_number_type == ORDER_NUMBER_TYPE_TABLE:
+            needs_table = order_type in TABLE_ORDER_TYPES
+            self._ticket_container.setVisible(False)
+            self._table_container.setVisible(needs_table and show_ticket_cfg)
+            # Stol rejimida sticker input tozalanadi
             self.ticket_input.clear()
-            self.ticket_input.setStyleSheet(self._input_style() + "background-color: #f3f4f6;")
-            self.numpad_panel.setVisible(False)
         else:
-            self.ticket_input.setStyleSheet(self._input_style() + "border: 2px solid #3b82f6;")
+            # Stiker rejimi (default)
+            needs_ticket = order_type in TICKET_ORDER_TYPES
+            self._ticket_container.setVisible(show_ticket_cfg)
+            self._table_container.setVisible(False)
+            self.ticket_input.setEnabled(needs_ticket)
+            if not needs_ticket:
+                self.ticket_input.clear()
+                self.ticket_input.setStyleSheet(self._input_style() + "background-color: #f3f4f6;")
+                self.numpad_panel.setVisible(False)
+            else:
+                self.ticket_input.setStyleSheet(self._input_style() + "border: 2px solid #3b82f6;")
+
+    # ── Role boshqaruvi (TZ 4.3) ─────────────
+    def set_role(self, role: str):
+        """Ofitsant rolida 'TO'LOV QILISH' yashirin, faqat 'Saqlash' ko'rinadi."""
+        self._role = role or "Kassir"
+        if self._role == "Ofitsant":
+            self.checkout_btn.setVisible(False)
+        else:
+            self.checkout_btn.setVisible(True)
+
+    # ── Stol tanlangach (TablePickerDialog dan) ─────
+    def set_selected_table(self, table: dict | None):
+        self.selected_table = table
+        if table:
+            room = table.get("room", "")
+            seats = table.get("seats", 0)
+            label = f"{room} / " if room else ""
+            seats_txt = f"  ({seats}o'rin)" if seats else ""
+            self.table_button.setText(f"🪑  {label}{table['name']}{seats_txt}")
+            self.table_button.setStyleSheet(self._table_btn_style(True))
+        else:
+            self.table_button.setText("Stol tanlash...")
+            self.table_button.setStyleSheet(self._table_btn_style(False))
 
     def load_customers(self):
         cfg = load_config()
@@ -756,28 +873,60 @@ class CartWidget(QWidget):
         self.items.clear()
         self.ticket_input.clear()
         self.comment_input.clear()
+        self.set_selected_table(None)
         self._close_panels()
         self.refresh_table()
 
-    def handle_checkout(self):
+    def _build_order_data(self) -> dict | None:
+        """Saqlash/Checkout uchun order_data ni hozirlash + validatsiya.
+
+        Returns None — agar validatsiya muvaffaqiyatsiz bo'lsa (dialog ko'rsatilgan).
+        """
         if not self.items:
             InfoDialog(self, "Xatolik", "Savat bo'sh!", kind="warning").exec()
-            return
+            return None
 
+        cfg = load_config()
+        order_number_type = cfg.get("order_number_type", ORDER_NUMBER_TYPE_STICKER)
         ticket_number = self.ticket_input.text().strip()
-        _default_cust = load_config().get("default_customer", "")
+        restaurant_table = ""
+
+        # Validatsiya — order_number_type ga qarab
+        if order_number_type == ORDER_NUMBER_TYPE_TABLE:
+            # Stol rejimi — faqat Shu yerda stol talab qiladi
+            if self.current_order_type in TABLE_ORDER_TYPES:
+                if not self.selected_table or not self.selected_table.get("name"):
+                    InfoDialog(self, "Xatolik", "Stolni tanlang!", kind="warning").exec()
+                    return None
+                restaurant_table = self.selected_table["name"]
+            # Saboy va boshqalar — raqamsiz, OK
+            ticket_number = ""
+        else:
+            # Stiker rejimi (default)
+            if self.current_order_type in TICKET_ORDER_TYPES and not ticket_number:
+                InfoDialog(self, "Xatolik", "Stiker raqamini kiriting!", kind="warning").exec()
+                return None
+
+        _default_cust = cfg.get("default_customer", "")
         selected_customer = self.customer_combo.currentText().strip() or _default_cust
 
-        if self.current_order_type in TICKET_ORDER_TYPES and not ticket_number:
-            InfoDialog(self, "Xatolik", "Stiker raqamini kiriting!", kind="warning").exec()
-            return
-
-        order_data = {
+        return {
             "items": [{"item_code": k, **v} for k, v in self.items.items()],
             "total_amount": self.total_amount,
             "order_type": self.current_order_type,
             "ticket_number": ticket_number,
+            "restaurant_table": restaurant_table,
             "customer": selected_customer,
             "comment": self.comment_input.text().strip(),
         }
-        self.checkout_requested.emit(order_data)
+
+    def handle_checkout(self):
+        data = self._build_order_data()
+        if data is not None:
+            self.checkout_requested.emit(data)
+
+    def handle_save(self):
+        """To'lovsiz saqlash — TZ 4.2."""
+        data = self._build_order_data()
+        if data is not None:
+            self.save_requested.emit(data)

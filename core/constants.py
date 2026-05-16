@@ -21,8 +21,12 @@ DEFAULT_CUSTOMER = ""
 DEFAULT_UOM = "Dona"
 DEFAULT_PRICE_LIST = "Standard"
 
-# Order types that require ticket number
+# Stiker rejimida ushbu order_type'lar uchun stiker raqami talab qilinadi
 TICKET_ORDER_TYPES = ["Shu yerda", "Saboy"]
+
+# Stol rejimida faqat ushbu order_type stol talab qiladi (TZ 4.1.1)
+# Saboy stolsiz — KOT da "Saboy" yozuvi
+TABLE_ORDER_TYPES = ["Shu yerda"]
 
 # All order types
 ORDER_TYPES = ["Shu yerda", "Saboy", "Dastavka", "Dastavka Saboy"]
@@ -34,3 +38,7 @@ ORDER_TYPE_MAP = {
     "Dastavka": "Delivery",
     "Dastavka Saboy": "Delivery",
 }
+
+# Order number type values (POS Profile custom_order_number_type)
+ORDER_NUMBER_TYPE_STICKER = "Stiker"
+ORDER_NUMBER_TYPE_TABLE = "Stol"
