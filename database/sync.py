@@ -215,6 +215,7 @@ class SyncWorker(QThread):
                     uom=DEFAULT_UOM,
                     sales_count=int(item_data.get("sales_count") or 0),
                     top_level=int(item_data.get("top_level") or 0),
+                    display_idx=int(item_data.get("idx") or 0),
                 ).on_conflict_replace().execute()
 
                 ItemPrice.insert(

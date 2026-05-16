@@ -59,6 +59,10 @@ MIGRATIONS = [
         "CREATE INDEX IF NOT EXISTS idx_restauranttable_name ON restauranttable(name);",
         "CREATE INDEX IF NOT EXISTS idx_restauranttable_room ON restauranttable(restaurant_room);",
     ]),
+    (7, "Add display_idx to item (URY Menu Item.idx — admin drag-drop tartibi)", [
+        "ALTER TABLE item ADD COLUMN display_idx INTEGER DEFAULT 0;",
+        "CREATE INDEX IF NOT EXISTS idx_item_display_idx ON item(display_idx);",
+    ]),
 ]
 
 

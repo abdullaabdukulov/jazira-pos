@@ -17,6 +17,10 @@ PERMANENT_KEYWORDS = [
     "server xatosi (417)",
     "server xatosi (403)",
     "server xatosi (404)",
+    # Phase 3 (TZ 4.6.2): stol race-check — qayta urinish foyda bermaydi,
+    # foydalanuvchi boshqa stolni tanlashi yoki kutishi kerak.
+    "table_busy",
+    "boshqa pos da band",
 ]
 
 

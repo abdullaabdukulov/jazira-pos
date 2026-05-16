@@ -982,7 +982,8 @@ class ItemBrowser(QWidget):
             if search:
                 query = query.where(Item.item_name.contains(search) | Item.item_code.contains(search))
 
-            query = query.order_by(Item.item_name.asc())
+            # URY Menu Item.idx (admin drag-drop tartibi) → alfavit fallback
+            query = query.order_by(Item.display_idx.asc(), Item.item_name.asc())
 
             row, col = 0, 0
             for item in query.limit(ITEM_LOAD_LIMIT):

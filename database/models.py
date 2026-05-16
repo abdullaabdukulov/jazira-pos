@@ -29,6 +29,9 @@ class Item(BaseModel):
     # UI da rim raqami (I, II, III) bilan badge ko'rsatiladi.
     sales_count = IntegerField(default=0, index=True)
     top_level = IntegerField(default=0)  # 0..3 (rim raqami uchun)
+    # URY Menu Item.idx — admin ERPNext da drag-drop bilan o'zgartiriladi.
+    # ItemBrowser orderlash uchun (TZ Phase 3).
+    display_idx = IntegerField(default=0, index=True)
     last_sync = DateTimeField(default=datetime.datetime.now)
 
 
