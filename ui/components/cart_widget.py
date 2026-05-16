@@ -890,6 +890,7 @@ class CartWidget(QWidget):
         order_number_type = cfg.get("order_number_type", ORDER_NUMBER_TYPE_STICKER)
         ticket_number = self.ticket_input.text().strip()
         restaurant_table = ""
+        restaurant_room = ""
 
         # Validatsiya — order_number_type ga qarab
         if order_number_type == ORDER_NUMBER_TYPE_TABLE:
@@ -899,6 +900,7 @@ class CartWidget(QWidget):
                     InfoDialog(self, "Xatolik", "Stolni tanlang!", kind="warning").exec()
                     return None
                 restaurant_table = self.selected_table["name"]
+                restaurant_room = self.selected_table.get("room", "") or ""
             # Saboy va boshqalar — raqamsiz, OK
             ticket_number = ""
         else:
@@ -916,6 +918,7 @@ class CartWidget(QWidget):
             "order_type": self.current_order_type,
             "ticket_number": ticket_number,
             "restaurant_table": restaurant_table,
+            "restaurant_room": restaurant_room,
             "customer": selected_customer,
             "comment": self.comment_input.text().strip(),
         }

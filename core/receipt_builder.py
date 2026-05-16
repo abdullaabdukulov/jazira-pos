@@ -298,6 +298,37 @@ def _order_type_label(order_type: str) -> str:
     return ORDER_TYPE_LABELS.get(order_type, "Chek")
 
 
+def _order_number_label(order_data: dict) -> str | None:
+    """`order_data` da `restaurant_table` yoki `ticket_number` bor bo'lsa,
+    chiqariladigan label qaytaradi. Aks holda None.
+
+    Stol formati: "Stol: T-005" yoki "Stol: Zal 1 / T-005" (room bo'lsa)
+    Stiker formati: "Stiker №42"
+    """
+    rt = (order_data.get("restaurant_table") or "").strip() if order_data.get("restaurant_table") else ""
+    if rt:
+        room = (order_data.get("restaurant_room") or "").strip() if order_data.get("restaurant_room") else ""
+        return f"Stol: {room} / {rt}" if room else f"Stol: {rt}"
+
+    tn = order_data.get("ticket_number", "")
+    if tn:
+        return f"Stiker №{tn}"
+
+    return None
+
+
+def _cashier_line(order_data: dict) -> str | None:
+    """Ofitsant/Kassir ismi va roli — chekda 1 qator (TZ 4.3.5).
+
+    Format: "Ofitsant: Aziz Karimov" yoki "Kassir: Bekzod"
+    """
+    name = (order_data.get("active_cashier") or "").strip() if order_data.get("active_cashier") else ""
+    if not name:
+        return None
+    role = (order_data.get("active_cashier_role") or "Kassir").strip() or "Kassir"
+    return f"{role}: {name}"
+
+
 def get_item_groups_map(items: list) -> dict:
     item_codes = [
         item.get("item_code", item.get("item", ""))
@@ -352,11 +383,16 @@ def build_customer_receipt(
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
         r.add_text(f"Mijoz: {customer}")
 
-    # ── Stiker raqami (katta) ──
-    ticket_number = order_data.get("ticket_number", "")
-    if ticket_number:
+    # ── Ofitsant/Kassir ismi (TZ 4.3.5) ──
+    cashier_line = _cashier_line(order_data)
+    if cashier_line:
+        r.add_text(cashier_line)
+
+    # ── Stol / Stiker raqami (TZ 4.1.8) ──
+    num_label = _order_number_label(order_data)
+    if num_label:
         r.add_separator("-")
-        r.add_center(f"Stiker №{ticket_number}", big=True)
+        r.add_center(num_label, big=True)
 
     r.add_separator("=")
 
@@ -432,17 +468,22 @@ def build_production_receipt(
     r.add_center(_order_type_label(order_type), big=True)
     r.add_center(datetime.now().strftime("%H:%M"))
 
-    # ── Stiker raqami (KATTA) — eng muhim ma'lumot ──
-    ticket_number = order_data.get("ticket_number", "")
-    if ticket_number:
+    # ── Stol / Stiker raqami (KATTA — eng muhim ma'lumot) ──
+    num_label = _order_number_label(order_data)
+    if num_label:
         r.add_separator("-")
-        r.add_center(f"Stiker №{ticket_number}", big=True)
+        r.add_center(num_label, big=True)
         r.add_separator("-")
 
     # ── Mijoz (dastavka) ──
     customer = order_data.get("customer", "")
     if order_type in ("Dastavka", "Dastavka Saboy") and customer and customer != "guest":
         r.add_text(f"Mijoz: {customer}")
+
+    # ── Ofitsant ismi (oshxonaga muhim — kim urgani aniq) ──
+    cashier_line = _cashier_line(order_data)
+    if cashier_line:
+        r.add_text(cashier_line)
 
     r.add_separator("=")
 
@@ -491,10 +532,10 @@ def build_cancel_production_receipt(
     r.add_center(_order_type_label(order_type))
     r.add_center(datetime.now().strftime("%H:%M"))
 
-    ticket_number = order_data.get("ticket_number", "")
-    if ticket_number:
+    num_label = _order_number_label(order_data)
+    if num_label:
         r.add_separator("-")
-        r.add_center(f"Stiker №{ticket_number}", big=True)
+        r.add_center(num_label, big=True)
         r.add_separator("-")
 
     r.add_text("Bekor qilingan mahsulotlar:")

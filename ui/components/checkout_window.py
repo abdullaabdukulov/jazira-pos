@@ -24,7 +24,8 @@ logger = get_logger(__name__)
 class CheckoutWorker(QThread):
     result_ready = pyqtSignal(bool, str)
 
-    def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI):
+    def __init__(self, invoice_data: dict, payments: list, offline_id: str, api: FrappeAPI,
+                 existing_invoice: str = ""):
         super().__init__()
         # Idempotency key — offline_id (UUID) ni server tomonga `client_ref` sifatida
         # jo'natamiz. Server bir xil UUID bilan kelgan sync_order so'rovini
@@ -34,10 +35,17 @@ class CheckoutWorker(QThread):
         self.payments = payments
         self.offline_id = offline_id
         self.api = api
+        # Phase 3 TZ #12: pending listdan davom etish — mavjud Draft POS Invoice
+        # uchun sync_order chaqirilmaydi, faqat make_invoice
+        self.existing_invoice = existing_invoice or ""
 
     def run(self):
         try:
-            # Shared API orqali chaqiriladi
+            if self.existing_invoice:
+                self._submit_existing()
+                return
+
+            # Yangi buyurtma flow — sync_order + make_invoice
             success, response = self.api.call_method(
                 "ury.ury.doctype.ury_order.ury_order.sync_order", self.invoice_data
             )
@@ -56,32 +64,7 @@ class CheckoutWorker(QThread):
                     self._save_offline("Chek raqami (invoice name) qaytmadi")
                     return
 
-                payment_payload = {
-                    "customer": self.invoice_data.get("customer"),
-                    "payments": self.payments,
-                    "cashier": self.invoice_data.get("cashier"),
-                    "pos_profile": self.invoice_data.get("pos_profile"),
-                    "owner": self.invoice_data.get("owner"),
-                    "additionalDiscount": 0,
-                    "table": None,
-                    "invoice": invoice_name,
-                }
-
-                submit_success, submit_response = self.api.call_method(
-                    "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
-                )
-
-                if submit_success:
-                    self.result_ready.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
-                else:
-                    # sync_order muvaffaqiyatli o'tdi — buyurtma serverda bor.
-                    # make_invoice xatosi bo'lsa ham chek chiqaramiz (True emit),
-                    # lekin keyinchalik qayta urinish uchun oflayn ham saqlaymiz.
-                    self._save_offline(
-                        f"To'lovda xatolik (make_invoice): {submit_response}",
-                        sync_order_name=invoice_name,
-                        partial_success=True,
-                    )
+                self._make_invoice(invoice_name)
             else:
                 # sync_order muvaffaqiyatsiz
                 error_msg = str(response)
@@ -95,6 +78,45 @@ class CheckoutWorker(QThread):
         finally:
             if not db.is_closed():
                 db.close()
+
+    def _submit_existing(self):
+        """Pending listdan kelgan mavjud Draft uchun faqat make_invoice (TZ #12)."""
+        try:
+            self._make_invoice(self.existing_invoice)
+        except Exception as e:
+            logger.error("Existing invoice submit xatosi: %s", e)
+            self.result_ready.emit(False, f"To'lovda xatolik: {e}")
+
+    def _make_invoice(self, invoice_name: str):
+        payment_payload = {
+            "customer": self.invoice_data.get("customer"),
+            "payments": self.payments,
+            "cashier": self.invoice_data.get("cashier"),
+            "pos_profile": self.invoice_data.get("pos_profile"),
+            "owner": self.invoice_data.get("owner"),
+            "additionalDiscount": 0,
+            "table": None,
+            "invoice": invoice_name,
+        }
+        submit_success, submit_response = self.api.call_method(
+            "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
+        )
+        if submit_success:
+            self.result_ready.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
+        else:
+            # Existing invoice uchun oflayn saqlash mantiqsiz — invoice
+            # allaqachon serverda. Faqat xatoni qaytaramiz.
+            if self.existing_invoice:
+                self.result_ready.emit(False, f"To'lovda xatolik: {submit_response}")
+            else:
+                # Yangi flow — sync_order muvaffaqiyatli o'tdi (invoice serverda bor).
+                # make_invoice xatosi bo'lsa ham True emit qilamiz, lekin retry uchun
+                # oflayn ham saqlaymiz.
+                self._save_offline(
+                    f"To'lovda xatolik (make_invoice): {submit_response}",
+                    sync_order_name=invoice_name,
+                    partial_success=True,
+                )
 
     def _save_offline(self, error, sync_order_name=None, partial_success=False):
         try:
@@ -517,16 +539,14 @@ class CheckoutWindow(QDialog):
             "active_cashier_role": str(self.order_data.get("active_cashier_role", "Kassir")),
             "table": (str(self.order_data.get("restaurant_table", "")) or None),
         }
-        # MANA SHU YERDA QO'SHASIZ:
-        import json
-        print("\n=== YUBORILAYOTGAN PAYLOAD ===")
-        print(json.dumps(payload, indent=4, ensure_ascii=False))
-        print("==============================\n")
-        logger.info(f"Yuborilayotgan payload: {json.dumps(payload, ensure_ascii=False)}")
+        logger.info("Checkout payload: %s", json.dumps(payload, ensure_ascii=False))
 
-        self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
-
-        self.worker = CheckoutWorker(payload, payments, self.offline_id, self.api)
+        # Phase 3 TZ #12: pending listdan davom etish — existing_invoice uzatamiz
+        existing_invoice = str(self.order_data.get("existing_invoice", ""))
+        self.worker = CheckoutWorker(
+            payload, payments, self.offline_id, self.api,
+            existing_invoice=existing_invoice,
+        )
         self.worker.result_ready.connect(self._on_worker_finished)
         self.worker.start()
 

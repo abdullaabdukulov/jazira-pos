@@ -896,6 +896,10 @@ class MainWindow(QMainWindow):
             InfoDialog(self, "Kassa topilmadi", "Ochiq kassa topilmadi.", kind="warning").exec()
             return
 
+        # Phase 3 TZ #16: pending Draft tekshiruvi
+        if not self._check_pending_before_closing():
+            return
+
         dlg = ConfirmDialog(
             self, "Kassani yopish",
             "Kassani yopmoqchimisiz?\nBarcha to'lovlar hisoblanadi.",
@@ -905,9 +909,78 @@ class MainWindow(QMainWindow):
         if not dlg.result_accepted:
             return
 
+        # Orphan stollarni tozalash (background, blocking emas)
+        self._cleanup_orphan_tables_async()
+
         closing_dlg = PosClosingDialog(self, self.api, self.opening_entry)
         closing_dlg.closing_completed.connect(self._on_pos_closed)
         closing_dlg.exec()
+
+    def _check_pending_before_closing(self) -> bool:
+        """Pending Draft buyurtmalar bo'lsa — ogohlantirish dialog.
+
+        Returns:
+            True — davom etish, False — bekor qilish.
+        """
+        try:
+            ok, counts = self.api.call_method(
+                "ury.ury_pos.api.getPendingOrderCounts",
+                {"only_mine": 0, "mine_cashier_name": ""},
+            )
+            total = int(counts.get("all", 0)) if (ok and isinstance(counts, dict)) else 0
+        except Exception as e:
+            logger.debug("Pending count tekshirish xatosi: %s", e)
+            total = 0
+
+        if total == 0:
+            return True
+
+        # Ogohlantirish
+        dlg = ConfirmDialog(
+            self, "To'lov kutilayotgan buyurtmalar",
+            f"{total} ta to'lanmagan buyurtma bor.\n\n"
+            f"Yopishdan oldin hammasini hal qiling yoki\n"
+            f"majburiy yopish (force) variantini tanlang.",
+            icon="⚠️",
+            yes_text="Ko'rib chiqish",
+            yes_color="#0ea5e9",
+            no_text="Bekor",
+        )
+        dlg.exec()
+        if dlg.result_accepted:
+            # Pending panelni ochish
+            self.show_pending_orders()
+        return False
+
+    def _cleanup_orphan_tables_async(self):
+        """Background da orphan stollarni tozalash (TZ 4.6.3)."""
+        class _Worker(QThread):
+            done = pyqtSignal(int)
+
+            def __init__(self, api):
+                super().__init__()
+                self.api = api
+
+            def run(self):
+                try:
+                    ok, resp = self.api.call_method(
+                        "ury.ury_pos.api.cleanupOrphanTables"
+                    )
+                    if ok and isinstance(resp, dict):
+                        self.done.emit(int(resp.get("freed_count", 0)))
+                    else:
+                        self.done.emit(0)
+                except Exception:
+                    self.done.emit(0)
+
+        self._orphan_worker = _Worker(self.api)
+        self._orphan_worker.done.connect(self._on_orphan_cleanup_done)
+        self._orphan_worker.start()
+
+    def _on_orphan_cleanup_done(self, freed: int):
+        if freed > 0:
+            logger.info("Orphan stollar tozalandi: %d ta", freed)
+            self.status_label.setText(f"Orphan stollar tozalandi: {freed} ta")
 
     def _on_pos_closed(self):
         self.opening_entry = None
