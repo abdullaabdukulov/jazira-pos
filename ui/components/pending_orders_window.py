@@ -96,6 +96,32 @@ class FetchPendingWorker(QThread):
                 db.close()
 
 
+class FetchPendingCountWorker(QThread):
+    """Faqat getPendingOrderCounts ni chaqiradi (panel yopiq paytda yengil refresh)."""
+    result_ready = pyqtSignal(bool, dict)
+
+    def __init__(self, api: FrappeAPI, only_mine: bool = False, mine_name: str = ""):
+        super().__init__()
+        self.api = api
+        self.only_mine = only_mine
+        self.mine_name = mine_name
+
+    def run(self):
+        try:
+            ok, counts = self.api.call_method(
+                "ury.ury_pos.api.getPendingOrderCounts",
+                {"only_mine": 1 if self.only_mine else 0,
+                 "mine_cashier_name": self.mine_name or ""},
+            )
+            if ok and isinstance(counts, dict):
+                self.result_ready.emit(True, counts)
+            else:
+                self.result_ready.emit(False, {})
+        except Exception as e:
+            logger.debug("FetchPendingCountWorker xato: %s", e)
+            self.result_ready.emit(False, {})
+
+
 class CancelPendingWorker(QThread):
     """cancelPendingOrder ni chaqiradi."""
     result_ready = pyqtSignal(bool, str)
@@ -365,6 +391,19 @@ class PendingOrdersWindow(QWidget):
         )
         self.worker.result_ready.connect(self._on_loaded)
         self.worker.start()
+
+    def refresh_count(self):
+        """Panel yopiq paytda — faqat top-bar countni yangilash uchun yengil API chaqiruv."""
+        only_mine = (self._role == "Ofitsant")
+        self._count_worker = FetchPendingCountWorker(
+            self.api, only_mine=only_mine, mine_name=self._mine_name,
+        )
+        self._count_worker.result_ready.connect(self._on_count_only)
+        self._count_worker.start()
+
+    def _on_count_only(self, success: bool, counts: dict):
+        if success:
+            self.count_changed.emit(int(counts.get("all", 0)))
 
     def _on_loaded(self, success: bool, rows: list, counts: dict):
         if not success:

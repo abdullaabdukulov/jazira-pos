@@ -38,6 +38,34 @@ _SELECTED_BORDER = "#3b82f6"
 _SELECTED_TEXT = "#1e40af"
 
 
+class RefreshTablesWorker(QThread):
+    """Server'dan stollar va xonalarni qayta yuklash workeri (realtime refresh)."""
+    result_ready = pyqtSignal(bool, list, list)  # success, tables, rooms
+
+    def __init__(self, api: FrappeAPI):
+        super().__init__()
+        self.api = api
+
+    def run(self):
+        try:
+            ok_t, tables = self.api.call_method("ury.ury_pos.api.getTables")
+            ok_r, rooms = self.api.call_method("ury.ury_pos.api.getRoomsForBranch")
+            if ok_t and isinstance(tables, list):
+                self.result_ready.emit(
+                    True,
+                    tables,
+                    rooms if (ok_r and isinstance(rooms, list)) else [],
+                )
+            else:
+                self.result_ready.emit(False, [], [])
+        except Exception as e:
+            logger.debug("RefreshTablesWorker xato: %s", e)
+            self.result_ready.emit(False, [], [])
+        finally:
+            if not db.is_closed():
+                db.close()
+
+
 class FreeTableWorker(QThread):
     """Stolni qo'lda bo'shatish workeri (freeTable API)."""
     result_ready = pyqtSignal(bool, str)
@@ -265,6 +293,39 @@ class TablePickerDialog(QDialog):
         root.addLayout(bottom)
 
     # ──────────────────────────────────────────────────
+    def refresh_tables(self):
+        """Server'dan eng yangi stol holatlarini olib lokal DB ni yangilaydi va UI ni
+        qayta chizadi. Realtime event larida chaqiriladi (table_occupied/freed)."""
+        if hasattr(self, "_refresh_worker") and self._refresh_worker.isRunning():
+            return
+        self._refresh_worker = RefreshTablesWorker(self.api)
+        self._refresh_worker.result_ready.connect(self._on_refresh_done)
+        self._refresh_worker.start()
+
+    def _on_refresh_done(self, success: bool, tables: list, rooms: list):
+        if not success:
+            return
+        try:
+            db.connect(reuse_if_open=True)
+            with db.atomic():
+                for t in tables:
+                    RestaurantTable.insert(
+                        name=t.get("name"),
+                        restaurant_room=t.get("restaurant_room") or "",
+                        no_of_seats=int(t.get("no_of_seats") or 0),
+                        occupied=bool(t.get("occupied")),
+                        is_take_away=bool(t.get("is_take_away")),
+                        latest_invoice_time=str(t.get("latest_invoice_time") or ""),
+                        layout_x=float(t.get("layout_x") or 0),
+                        layout_y=float(t.get("layout_y") or 0),
+                        layout_width=float(t.get("layout_width") or 0),
+                        layout_height=float(t.get("layout_height") or 0),
+                        table_shape=t.get("table_shape") or "",
+                    ).on_conflict_replace().execute()
+            self._load_data()
+        except Exception as e:
+            logger.debug("Stol picker refresh xatosi: %s", e)
+
     def _load_data(self):
         """Lokal DB dan xona va stollarni o'qish va UI ni yangilash."""
         try:

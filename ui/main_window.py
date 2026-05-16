@@ -24,6 +24,9 @@ from ui.components.pos_closing import PosClosingDialog
 from ui.components.pos_shifts_window import PosShiftsWindow
 from ui.components.dialogs import InfoDialog, ConfirmDialog
 from ui.components.loading import InlineSpinner
+from ui.components.offline_block_overlay import OfflineBlockOverlay
+from core.realtime import RealtimeClient
+from core.connection_monitor import ConnectionMonitor, STATE_ONLINE, STATE_OFFLINE
 from ui.icons import (
     icon_plus, icon_sync, icon_history, icon_clock,
     icon_lock, icon_signal, icon_loading,
@@ -470,35 +473,120 @@ class MainWindow(QMainWindow):
         self.monitor_timer.timeout.connect(self.monitor_system)
         self.monitor_timer.start(MONITOR_INTERVAL_MS)
 
+        # ── Phase 2: Real-time + ConnectionMonitor (TZ 4.4, 4.7) ──
+        self._start_realtime_and_monitor()
+
         self._check_pos_opening()
 
-    # ── System monitor ───────────────────────────────
-    def monitor_system(self):
-        self._check_server_status()
-        self._update_offline_queue_count()
+    # ── Realtime + connection monitor (Phase 2) ──────
+    def _start_realtime_and_monitor(self):
+        try:
+            self.realtime = RealtimeClient(self.api, parent=self)
+            self.connection_monitor = ConnectionMonitor(
+                self.api, realtime=self.realtime, parent=self,
+            )
 
-    def _check_server_status(self):
-        if hasattr(self, '_connectivity_worker') and self._connectivity_worker.isRunning():
-            return
-        self._connectivity_worker = ConnectivityCheckWorker(self.api)
-        self._connectivity_worker.result_ready.connect(self._update_connectivity_ui)
-        self._connectivity_worker.start()
+            # Realtime eventlari → handlerlar
+            self.realtime.pending_order_created.connect(self._on_realtime_pending_changed)
+            self.realtime.pending_order_updated.connect(self._on_realtime_pending_changed)
+            self.realtime.pending_order_cancelled.connect(self._on_realtime_pending_changed)
+            self.realtime.pending_order_paid.connect(self._on_realtime_pending_changed)
+            self.realtime.table_occupied.connect(self._on_realtime_table_changed)
+            self.realtime.table_freed.connect(self._on_realtime_table_changed)
 
-    def _update_connectivity_ui(self, is_online: bool):
-        if is_online:
+            # Holat o'zgarganda — UI va overlay
+            self.connection_monitor.state_changed.connect(self._on_connection_state_changed)
+
+            # Ofitsant uchun overlay (faqat ofitsant rolida ko'rinadi)
+            self.offline_overlay = OfflineBlockOverlay(self)
+            self.offline_overlay.set_debug_info_provider(self._debug_info)
+            self.offline_overlay.retry_requested.connect(self._on_overlay_retry)
+            self.offline_overlay.hide()
+
+            self.realtime.start()
+            self.connection_monitor.start()
+        except Exception as e:
+            logger.error("Realtime / ConnectionMonitor boshlash xatosi: %s", e)
+
+    def _on_realtime_pending_changed(self, payload: dict):
+        """Pending order eventlari — panel va countni yangilash."""
+        try:
+            if hasattr(self, "pending_panel"):
+                # Faqat panel ochiq bo'lsa to'liq yuklash, yopiq bo'lsa faqat count
+                if self.pending_panel.isVisible():
+                    self.pending_panel.load_pending()
+                else:
+                    self.pending_panel.refresh_count()
+        except Exception as e:
+            logger.debug("pending realtime handler xatosi: %s", e)
+
+    def _on_realtime_table_changed(self, payload: dict):
+        """Stol band/bo'shadi — TablePicker ochiq bo'lsa refresh."""
+        try:
+            picker = getattr(self, "_active_table_picker", None)
+            if picker is not None and picker.isVisible():
+                picker.refresh_tables()
+        except Exception as e:
+            logger.debug("table realtime handler xatosi: %s", e)
+
+    def _on_connection_state_changed(self, state: str):
+        """checking / online / offline. Ofitsant rolida overlay show/hide."""
+        # Top-bar wifi/text indicator
+        if state == STATE_ONLINE:
             self._wifi_icon.setPixmap(icon_wifi("#10b981").pixmap(s(18), s(18)))
             self.status_text.setText("Online")
             self.status_text.setStyleSheet(f"""
                 font-weight: 700; color: #10b981; font-size: {font(12)}px;
                 background: transparent;
             """)
-        else:
+        elif state == STATE_OFFLINE:
             self._wifi_icon.setPixmap(icon_wifi("#ef4444").pixmap(s(18), s(18)))
             self.status_text.setText("Offline")
             self.status_text.setStyleSheet(f"""
                 font-weight: 700; color: #ef4444; font-size: {font(12)}px;
                 background: transparent;
             """)
+        else:  # checking
+            self._wifi_icon.setPixmap(icon_wifi("#94a3b8").pixmap(s(18), s(18)))
+            self.status_text.setText("Tekshirilmoqda")
+            self.status_text.setStyleSheet(f"""
+                font-weight: 700; color: #94a3b8; font-size: {font(12)}px;
+                background: transparent;
+            """)
+
+        # Ofitsant rolida — offline bo'lsa block overlay (TZ 4.7.3)
+        if self.is_waiter() and hasattr(self, "offline_overlay"):
+            if state == STATE_OFFLINE:
+                self.offline_overlay.show_overlay()
+            else:
+                self.offline_overlay.hide_overlay()
+
+    def _on_overlay_retry(self):
+        """Ofitsant 'Qayta urinish' bossadi — darhol ping va realtime reconnect."""
+        try:
+            if hasattr(self, "realtime") and not self.realtime.is_connected:
+                self.realtime.start()
+            if hasattr(self, "connection_monitor"):
+                self.connection_monitor.force_check()
+        except Exception as e:
+            logger.debug("retry xatosi: %s", e)
+
+    def _debug_info(self) -> str:
+        """Yordam dialog uchun diagnostika ma'lumotlari."""
+        rt_ok = getattr(self, "realtime", None) and self.realtime.is_connected
+        state = getattr(self, "connection_monitor", None) and self.connection_monitor.state
+        return (
+            f"FRAPPE_URL: {self.api.url}\n"
+            f"SocketIO ulangan: {rt_ok}\n"
+            f"Tarmoq holati: {state}\n"
+            f"Foydalanuvchi: {self.get_active_cashier_name()} ({self.get_active_cashier_role()})"
+        )
+
+    # ── System monitor ───────────────────────────────
+    def monitor_system(self):
+        # Phase 2 da connectivity check ConnectionMonitor tomonidan amalga oshiriladi.
+        # Bu yerda faqat offline_queue countni yangilash qolgan.
+        self._update_offline_queue_count()
 
     def _update_offline_queue_count(self):
         try:
@@ -611,9 +699,14 @@ class MainWindow(QMainWindow):
         cfg = load_config()
         current_tbl = (cart.selected_table or {}).get("name", "")
         dlg = TablePickerDialog(self, self.api, current_table=current_tbl)
-        if dlg.exec():
-            if dlg.selected_table:
-                cart.set_selected_table(dlg.selected_table)
+        # Realtime handler dialogga ulanishi uchun reference saqlash
+        self._active_table_picker = dlg
+        try:
+            if dlg.exec():
+                if dlg.selected_table:
+                    cart.set_selected_table(dlg.selected_table)
+        finally:
+            self._active_table_picker = None
 
     # ── TZ 4.2: To'lov kutilmoqda panel ──────────
     def show_pending_orders(self):
@@ -836,10 +929,28 @@ class MainWindow(QMainWindow):
             self.sales_tabs.setEnabled(enabled)
 
     # ── Close event ──────────────────────────────────
+    def resizeEvent(self, event):
+        # Phase 2: ofitsant block overlay butun oynani egallasin
+        if hasattr(self, 'offline_overlay'):
+            self.offline_overlay.setGeometry(self.rect())
+        super().resizeEvent(event)
+
     def closeEvent(self, event):
         # 1. Timerni to'xtatish — yangi worker yaratilmasin
         if hasattr(self, 'monitor_timer'):
             self.monitor_timer.stop()
+
+        # 1b. ConnectionMonitor va SocketIO ni to'xtatish (Phase 2)
+        if hasattr(self, 'connection_monitor'):
+            try:
+                self.connection_monitor.stop()
+            except Exception:
+                pass
+        if hasattr(self, 'realtime'):
+            try:
+                self.realtime.stop()
+            except Exception:
+                pass
 
         # 2. Worker signallarini uzish — yopilish jarayonida UI yangilanmasin
         for attr, signals in (
