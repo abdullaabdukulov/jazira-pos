@@ -2,7 +2,7 @@
 
 TZ 4.2.4 ga muvofiq:
 - Filter chiplari (order_type bo'yicha + countlar)
-- Jadval: Vaqt, #N/Stol, Tur, Mijoz, Ofitsant, Summa, Amallar
+- Jadval: Vaqt, #N/Stol, Tur, Mijoz, Kim urdi (kassir/ofitsant), Summa, Amallar
 - Amallar: "💰 To'lov" (CheckoutWindow), "✕ Bekor" (sabab bilan)
 - Ofitsant rolida: faqat o'zinikini ko'radi, amallar yashirin
 - Real-time refresh (Phase 2)
@@ -279,7 +279,7 @@ class PendingOrdersWindow(QWidget):
         # ── Jadval ────────────────────────────
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            "Vaqt", "#N / Stol", "Tur", "Mijoz", "Ofitsant", "Summa", "Amallar"
+            "Vaqt", "#N / Stol", "Tur", "Mijoz", "Kim urdi", "Summa", "Amallar"
         ])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
