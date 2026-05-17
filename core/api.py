@@ -241,7 +241,34 @@ class FrappeAPI:
             if response.status_code == 200:
                 return True, response.json().get("message", response.json())
             else:
-                logger.error("call_method %s — HTTP %d: %s", method, response.status_code, response.text[:500])
+                # 500 xatolar uchun to'liq traceback (server tomonni debug qilish uchun)
+                text = response.text
+                if response.status_code >= 500 and len(text) > 500:
+                    # JSON dan traceback'ni ajratib chiqarish (oson o'qish uchun)
+                    try:
+                        import json as _json
+                        body = _json.loads(text)
+                        exc_msg = body.get("exception", "")
+                        exc_lines = body.get("exc", "")
+                        if isinstance(exc_lines, str):
+                            try:
+                                exc_lines = _json.loads(exc_lines)
+                            except Exception:
+                                pass
+                        if isinstance(exc_lines, list) and exc_lines:
+                            tb = exc_lines[0] if isinstance(exc_lines[0], str) else str(exc_lines[0])
+                        else:
+                            tb = text[:3000]
+                        logger.error(
+                            "call_method %s — HTTP %d:\n  %s\n%s",
+                            method, response.status_code, exc_msg,
+                            tb[:4000].replace("\\n", "\n"),
+                        )
+                    except Exception:
+                        logger.error("call_method %s — HTTP %d: %s",
+                                     method, response.status_code, text[:3000])
+                else:
+                    logger.error("call_method %s — HTTP %d: %s", method, response.status_code, text[:500])
                 return False, f"Server xatosi ({response.status_code})"
         except Exception as e:
             logger.error("call_method %s xatosi: %s", method, e)
