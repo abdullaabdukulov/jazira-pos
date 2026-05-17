@@ -10,7 +10,7 @@ TZ 4.1.6 ga muvofiq:
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QFrame, QScrollArea, QGridLayout, QSizePolicy,
-    QLineEdit,
+    QLineEdit, QStackedWidget,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
 from PyQt6.QtGui import QColor, QPainter, QPen, QBrush
@@ -177,14 +177,27 @@ class TablePickerDialog(QDialog):
         root.setContentsMargins(s(18), s(14), s(18), s(14))
         root.setSpacing(s(10))
 
-        # ── Header ───────────────────────────────
+        # ── Header (back tugma stollar view'da, title view'ga qarab o'zgaradi) ──
         hdr = QHBoxLayout()
-        title = QLabel("Stol tanlang")
-        title.setStyleSheet(f"font-size: {font(20)}px; font-weight: 800; color: #0f172a;")
-        hdr.addWidget(title)
+        self._back_btn = QPushButton("← Xonalar")
+        self._back_btn.setFixedHeight(s(40))
+        self._back_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #f1f5f9; color: #1d4ed8;
+                font-size: {font(13)}px; font-weight: 700;
+                padding: 0 {s(14)}px; border-radius: {s(8)}px; border: none;
+            }}
+            QPushButton:hover {{ background: #e2e8f0; }}
+        """)
+        self._back_btn.clicked.connect(self._show_rooms_view)
+        self._back_btn.setVisible(False)
+        hdr.addWidget(self._back_btn)
+
+        self._title_label = QLabel("Xonani tanlang")
+        self._title_label.setStyleSheet(f"font-size: {font(20)}px; font-weight: 800; color: #0f172a;")
+        hdr.addWidget(self._title_label)
         hdr.addStretch()
 
-        # Refresh tugma
         refresh_btn = QPushButton("⟳")
         refresh_btn.setFixedSize(s(40), s(40))
         refresh_btn.setStyleSheet(f"""
@@ -212,28 +225,34 @@ class TablePickerDialog(QDialog):
         hdr.addWidget(close_btn)
         root.addLayout(hdr)
 
-        # ── Room tabs ────────────────────────────
-        self._rooms_row = QHBoxLayout()
-        self._rooms_row.setSpacing(s(6))
-        self._rooms_row.addStretch()
-        rooms_widget = QWidget()
-        rooms_widget.setLayout(self._rooms_row)
-        rooms_widget.setStyleSheet("background: transparent;")
-        root.addWidget(rooms_widget)
-
-        # ── Stol canvas (scrollable) ─────────────
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
+        # ── 2 view'li stacked: 0=xonalar ro'yxati, 1=stollar ─────────────
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet(f"""
+            QStackedWidget {{
                 background: #f8fafc; border: 1px solid #e2e8f0;
                 border-radius: {s(12)}px;
             }}
         """)
+
+        # View 0 — Xonalar ro'yxati (cards)
+        self._rooms_scroll = QScrollArea()
+        self._rooms_scroll.setWidgetResizable(True)
+        self._rooms_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self._rooms_canvas = QWidget()
+        self._rooms_canvas.setStyleSheet("background: transparent;")
+        self._rooms_scroll.setWidget(self._rooms_canvas)
+        self._stack.addWidget(self._rooms_scroll)
+
+        # View 1 — Stollar (canvas)
+        tables_scroll = QScrollArea()
+        tables_scroll.setWidgetResizable(True)
+        tables_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self._canvas = QWidget()
         self._canvas.setStyleSheet("background: transparent;")
-        scroll.setWidget(self._canvas)
-        root.addWidget(scroll, stretch=1)
+        tables_scroll.setWidget(self._canvas)
+        self._stack.addWidget(tables_scroll)
+
+        root.addWidget(self._stack, stretch=1)
 
         # ── Selected info + buttons ─────────────
         bottom = QHBoxLayout()
@@ -322,113 +341,194 @@ class TablePickerDialog(QDialog):
                         layout_height=float(t.get("layout_height") or 0),
                         table_shape=t.get("table_shape") or "",
                     ).on_conflict_replace().execute()
-            self._load_data()
+
+            # Foydalanuvchi qaysi view'da bo'lganini saqlaymiz
+            was_tables_view = self._stack.currentIndex() == 1
+            active_room = getattr(self, "_active_room", "")
+
+            # Lokal DB ni qayta yuklab cache yangilash
+            self._all_rooms = list(Room.select().order_by(Room.name))
+            self._all_tables = list(RestaurantTable.select().order_by(
+                RestaurantTable.restaurant_room, RestaurantTable.name
+            ))
+
+            if was_tables_view:
+                # Foydalanuvchi stollar view'da edi — shu xonadagi stollar
+                self._show_tables_view(active_room)
+            else:
+                # Xonalar ro'yxati view'da edi — qayta ko'rsatamiz
+                self._render_rooms_cards()
         except Exception as e:
             logger.debug("Stol picker refresh xatosi: %s", e)
 
     def _load_data(self):
-        """Lokal DB dan xona va stollarni o'qish va UI ni yangilash."""
+        """Lokal DB dan xona va stollarni o'qish va UI ni yangilash.
+
+        Avval xonalar ro'yxati ko'rsatiladi. Xona tanlangach uning stollari
+        ochiladi. Agar bitta xona bo'lsa, to'g'ridan-to'g'ri stollarga o'tadi.
+        """
         try:
             db.connect(reuse_if_open=True)
-            rooms = list(Room.select().order_by(Room.name))
-            tables = list(RestaurantTable.select().order_by(
+            self._all_rooms = list(Room.select().order_by(Room.name))
+            self._all_tables = list(RestaurantTable.select().order_by(
                 RestaurantTable.restaurant_room, RestaurantTable.name
             ))
 
-            if not tables:
+            if not self._all_tables:
                 self._show_empty_state()
                 return
 
-            self._render_room_tabs(rooms, tables)
-            # Birinchi xonani avto tanlash (yoki "Hammasi")
-            if rooms:
-                # Default — birinchi mavjud xona
-                first_room = next(
-                    (r.name for r in rooms if any(t.restaurant_room == r.name for t in tables)),
-                    rooms[0].name,
-                )
-                self._select_room(first_room, tables)
+            # Faqat stollarga ega xonalarni qoldiramiz
+            room_names_with_tables = {
+                t.restaurant_room for t in self._all_tables if t.restaurant_room
+            }
+            visible_rooms = [r for r in self._all_rooms if r.name in room_names_with_tables]
+
+            # Stollari bor lekin Room recordi yo'q — string-only xonalar
+            orphan_rooms = room_names_with_tables - {r.name for r in self._all_rooms}
+
+            if len(visible_rooms) + len(orphan_rooms) <= 1:
+                # Bitta xona yoki xona yo'q — to'g'ridan-to'g'ri stollar
+                if visible_rooms:
+                    self._show_tables_view(visible_rooms[0].name)
+                elif orphan_rooms:
+                    self._show_tables_view(list(orphan_rooms)[0])
+                else:
+                    self._show_tables_view("")
             else:
-                # Xonalar yo'q — barcha stollar bitta canvasda
-                self._select_room("", tables)
+                # Ko'p xona — avval xonalar ro'yxati
+                self._show_rooms_view()
 
         except Exception as e:
             logger.error("Stol picker yuklashda xato: %s", e)
-            InfoDialog(self, "Xatolik", f"Stollarni yuklab bo'lmadi: {e}", kind="error").exec()
+            InfoDialog(self, "Xatolik", f"Stollarni yuklab bo'lmadi: {e}", kind="info").exec()
+
+    def _show_rooms_view(self):
+        """Bosqich 1: xonalar ro'yxati cards bilan."""
+        self._stack.setCurrentIndex(0)
+        self._back_btn.setVisible(False)
+        self._title_label.setText("Xonani tanlang")
+        # Tanlangan stolni tozalash (boshqa xonaga o'tilganda)
+        self._selected_doc = None
+        self._info_label.setText("Xonani tanlang")
+        self._info_label.setStyleSheet(
+            f"font-size: {font(15)}px; font-weight: 700; color: #64748b;"
+        )
+        self._select_btn.setEnabled(False)
+        self._free_btn.setVisible(False)
+        self._render_rooms_cards()
+
+    def _show_tables_view(self, room: str):
+        """Bosqich 2: tanlangan xonadagi stollar."""
+        self._stack.setCurrentIndex(1)
+        # Bitta xona bo'lsa back tugma ko'rinmaydi (tasodifan bosilmasin)
+        room_names_with_tables = {
+            t.restaurant_room for t in self._all_tables if t.restaurant_room
+        }
+        single_room = len(room_names_with_tables) <= 1
+        self._back_btn.setVisible(not single_room)
+        room_label = room if room else "Stollar"
+        self._title_label.setText(f"{room_label} — stol tanlang")
+        self._active_room = room
+        # Tanlangan xonadagi stollar
+        filtered = (
+            [t for t in self._all_tables if t.restaurant_room == room]
+            if room else self._all_tables
+        )
+        self._render_tables(filtered)
+
+    def _render_rooms_cards(self):
+        """Xonalar cards (5 ustun grid)."""
+        # Eski canvasni tozalash
+        if self._rooms_canvas.layout() is not None:
+            self._clear_layout(self._rooms_canvas.layout())
+            QWidget().setLayout(self._rooms_canvas.layout())
+
+        grid = QGridLayout(self._rooms_canvas)
+        grid.setSpacing(s(12))
+        grid.setContentsMargins(s(20), s(20), s(20), s(20))
+
+        # Stollarini Room nomi bo'yicha aniqlaymiz (Room recordi bo'lmasligi mumkin)
+        room_table_count = {}
+        room_occupied = {}
+        for t in self._all_tables:
+            rn = t.restaurant_room or "(xonasiz)"
+            room_table_count[rn] = room_table_count.get(rn, 0) + 1
+            if t.occupied:
+                room_occupied[rn] = room_occupied.get(rn, 0) + 1
+
+        # Ro'yxat (Room records + orphan rooms)
+        all_room_names = list({r.name for r in self._all_rooms} | set(room_table_count.keys()))
+        all_room_names.sort()
+        all_room_names = [r for r in all_room_names if r in room_table_count]
+
+        cols = 4
+        for i, rn in enumerate(all_room_names):
+            total = room_table_count.get(rn, 0)
+            busy = room_occupied.get(rn, 0)
+            free = total - busy
+            card = self._make_room_card(rn, total, free, busy)
+            grid.addWidget(card, i // cols, i % cols)
+
+        grid.setRowStretch(grid.rowCount(), 1)
+
+    def _make_room_card(self, room_name: str, total: int, free: int, busy: int) -> QPushButton:
+        """Xona kartochkasi — bosilsa stollarga o'tadi."""
+        card = QPushButton()
+        card.setFixedHeight(s(140))
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Rangi — bo'sh stollar borligi bo'yicha
+        if free > 0:
+            border = "#bbf7d0"
+            bg = "#f0fdf4"
+            badge_bg = "#16a34a"
+        else:
+            border = "#fecaca"
+            bg = "#fef2f2"
+            badge_bg = "#dc2626"
+        card.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg}; color: #0f172a;
+                border: 2px solid {border};
+                border-radius: {s(14)}px;
+                padding: {s(14)}px;
+                text-align: left;
+            }}
+            QPushButton:hover {{
+                background: white;
+                border-color: #93c5fd;
+            }}
+            QPushButton:pressed {{ background: #eff6ff; }}
+        """)
+        # Layout o'rniga matn (button label) — multi-line
+        card.setText(
+            f"🏠  {room_name}\n\n"
+            f"  📋 Jami:  {total} stol\n"
+            f"  ✓ Bo'sh:  {free}\n"
+            f"  • Band:  {busy}"
+        )
+        card.setStyleSheet(card.styleSheet() + f"""
+            QPushButton {{ font-size: {font(14)}px; font-weight: 700; }}
+        """)
+        card.clicked.connect(lambda _=None, r=room_name: self._show_tables_view(r))
+        return card
 
     def _show_empty_state(self):
-        # Canvasni tozalash
-        if self._canvas.layout() is not None:
-            self._clear_layout(self._canvas.layout())
-        v = QVBoxLayout(self._canvas)
+        # Rooms view'ga o'tib u yerda xabar ko'rsatamiz
+        self._stack.setCurrentIndex(0)
+        self._back_btn.setVisible(False)
+        self._title_label.setText("Stol tanlang")
+        if self._rooms_canvas.layout() is not None:
+            self._clear_layout(self._rooms_canvas.layout())
+            QWidget().setLayout(self._rooms_canvas.layout())
+        v = QVBoxLayout(self._rooms_canvas)
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        msg = QLabel("Stollar topilmadi.\nERPNext da URY Table yarating va sinxronlang.")
+        msg = QLabel("🚫  Stollar topilmadi\n\n"
+                     "ERPNext da URY Table yarating va sinxronlang.")
         msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         msg.setStyleSheet(f"font-size: {font(15)}px; color: #94a3b8; padding: {s(40)}px;")
         v.addWidget(msg)
 
-    def _render_room_tabs(self, rooms, tables):
-        # Eski tugmalarni tozalash
-        while self._rooms_row.count() > 0:
-            item = self._rooms_row.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._room_buttons.clear()
-
-        # "Hammasi" tab — birlashtirilgan ko'rinish (faqat 1+ xona bo'lsa)
-        if len(rooms) > 1:
-            self._add_room_button("", "Hammasi", len(tables), tables)
-
-        # Har bir xona
-        for r in rooms:
-            count = sum(1 for t in tables if t.restaurant_room == r.name)
-            if count > 0:
-                self._add_room_button(r.name, r.name, count, tables)
-
-        self._rooms_row.addStretch()
-
-    def _add_room_button(self, room_key: str, label: str, count: int, tables):
-        btn = QPushButton(f"{label}  ({count})")
-        btn.setFixedHeight(s(40))
-        btn.setCheckable(True)
-        btn.setStyleSheet(self._room_btn_style(False))
-        btn.clicked.connect(lambda: self._select_room(room_key, tables))
-        self._rooms_row.insertWidget(self._rooms_row.count() - 1, btn)
-        self._room_buttons[room_key] = btn
-
-    @staticmethod
-    def _room_btn_style(active: bool) -> str:
-        if active:
-            return f"""
-                QPushButton {{
-                    background: #1d4ed8; color: white;
-                    font-weight: 800; font-size: {font(13)}px;
-                    padding: 0 {s(18)}px; border-radius: {s(10)}px;
-                    border: none;
-                }}
-            """
-        return f"""
-            QPushButton {{
-                background: white; color: #475569;
-                font-weight: 700; font-size: {font(13)}px;
-                padding: 0 {s(18)}px; border-radius: {s(10)}px;
-                border: 1.5px solid #e2e8f0;
-            }}
-            QPushButton:hover {{
-                background: #eff6ff; color: #1d4ed8; border-color: #93c5fd;
-            }}
-        """
-
-    def _select_room(self, room: str, tables):
-        self._active_room = room
-        # Tab visual aktiv holat
-        for k, btn in self._room_buttons.items():
-            btn.setChecked(k == room)
-            btn.setStyleSheet(self._room_btn_style(k == room))
-
-        # Canvasni tiklash
-        filtered = tables if not room else [t for t in tables if t.restaurant_room == room]
-        self._render_tables(filtered)
 
     def _render_tables(self, tables: list):
         # Eski canvasni tozalash
