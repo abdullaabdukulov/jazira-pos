@@ -8,7 +8,7 @@ TZ 4.2.4 ga muvofiq:
 - Real-time refresh (Phase 2)
 """
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QFrame,
     QScroller, QScrollerProperties, QLineEdit,
 )
@@ -179,11 +179,6 @@ class FetchOrderDetailWorker(QThread):
 # ═══════════════════════════════════════════════════════════════════════════
 #  CancelReasonDialog
 # ═══════════════════════════════════════════════════════════════════════════
-
-class CancelReasonDialog(QFrame):
-    """Sodda inline sabab dialog (modal QDialog emas, QFrame overlay)."""
-    pass  # ishlatilmaydi — QInputDialog kerak emas, oddiy InfoDialog + input ishlatamiz
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Asosiy panel
@@ -531,17 +526,16 @@ class PendingOrdersWindow(QWidget):
         if not invoice:
             return
 
-        # Sabab dialog
-        from PyQt6.QtWidgets import QInputDialog
-        reason, ok = QInputDialog.getText(
-            self, "Bekor qilish sababi",
-            f"{invoice} buyurtmasini bekor qilish sababi:",
-            QLineEdit.EchoMode.Normal, "",
-        )
-        if not ok or not reason.strip():
+        # History window dagi tezkor sabablar + sensor klaviatura bilan dialog
+        from ui.components.history_window import CancelReasonDialog
+        dlg = CancelReasonDialog(self, invoice)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        reason = dlg.get_reason()
+        if not reason:
             return
 
-        self._cancel_worker = CancelPendingWorker(self.api, invoice, reason.strip())
+        self._cancel_worker = CancelPendingWorker(self.api, invoice, reason)
         self._cancel_worker.result_ready.connect(self._on_cancel_done)
         self._cancel_worker.start()
 
@@ -550,4 +544,4 @@ class PendingOrdersWindow(QWidget):
             InfoDialog(self, "Bajarildi", message, kind="success").exec()
             self.load_pending()
         else:
-            InfoDialog(self, "Xatolik", message, kind="error").exec()
+            InfoDialog(self, "Xatolik", message, kind="info").exec()
