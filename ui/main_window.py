@@ -537,6 +537,13 @@ class MainWindow(QMainWindow):
 
     def _on_connection_state_changed(self, state: str):
         """checking / online / offline. Ofitsant rolida overlay show/hide."""
+        # Offline → online o'tishida pending count'ni qayta yuklash (uzilishda
+        # o'tkazib yuborilgan eventlar uchun safety net)
+        prev_state = getattr(self, "_last_conn_state", None)
+        if state == STATE_ONLINE and prev_state in (STATE_OFFLINE, "checking"):
+            self._refresh_pending_count_silent()
+        self._last_conn_state = state
+
         # Top-bar wifi/text indicator
         if state == STATE_ONLINE:
             self._wifi_icon.setPixmap(icon_wifi("#10b981").pixmap(s(18), s(18)))
@@ -591,8 +598,25 @@ class MainWindow(QMainWindow):
     # ── System monitor ───────────────────────────────
     def monitor_system(self):
         # Phase 2 da connectivity check ConnectionMonitor tomonidan amalga oshiriladi.
-        # Bu yerda faqat offline_queue countni yangilash qolgan.
         self._update_offline_queue_count()
+        # Pending count fallback — SocketIO event'siz holatlar uchun (yoki dastur
+        # ochilganda mavjud Draft'lar ko'rinishi uchun).
+        self._refresh_pending_count_silent()
+
+    def _refresh_pending_count_silent(self):
+        """Top-bar pending countni jim yangilash (panel ochiq emas paytda)."""
+        try:
+            if not hasattr(self, "pending_panel"):
+                return
+            # Role/name oxirgi marta o'rnatilgani saqlanadi panelda
+            self.pending_panel.set_role_and_name(
+                self.get_active_cashier_role(),
+                self.get_active_cashier_name(),
+                self.get_active_cashier_user(),
+            )
+            self.pending_panel.refresh_count()
+        except Exception as e:
+            logger.debug("Pending count silent refresh xatosi: %s", e)
 
     def _update_offline_queue_count(self):
         try:
@@ -880,6 +904,10 @@ class MainWindow(QMainWindow):
             # Sidebar kategoriyalarini va itemlarni yangilash
             self.item_browser.load_categories()
             self.item_browser.load_items()
+            # Birinchi sync tugagach pending count yuklab top-bar tugmasini
+            # to'g'ri ko'rsatamiz (avval 0 turardi, SocketIO event'lar yangi
+            # zakazlar uchun keladi).
+            self._refresh_pending_count_silent()
         if self._auto_sync:
             self._auto_sync = False
             if not success:
