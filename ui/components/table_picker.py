@@ -378,26 +378,10 @@ class TablePickerDialog(QDialog):
                 self._show_empty_state()
                 return
 
-            # Faqat stollarga ega xonalarni qoldiramiz
-            room_names_with_tables = {
-                t.restaurant_room for t in self._all_tables if t.restaurant_room
-            }
-            visible_rooms = [r for r in self._all_rooms if r.name in room_names_with_tables]
-
-            # Stollari bor lekin Room recordi yo'q — string-only xonalar
-            orphan_rooms = room_names_with_tables - {r.name for r in self._all_rooms}
-
-            if len(visible_rooms) + len(orphan_rooms) <= 1:
-                # Bitta xona yoki xona yo'q — to'g'ridan-to'g'ri stollar
-                if visible_rooms:
-                    self._show_tables_view(visible_rooms[0].name)
-                elif orphan_rooms:
-                    self._show_tables_view(list(orphan_rooms)[0])
-                else:
-                    self._show_tables_view("")
-            else:
-                # Ko'p xona — avval xonalar ro'yxati
-                self._show_rooms_view()
+            # Har doim avval xonalar ro'yxati (foydalanuvchi talab qildi:
+            # avval room select keyin ichida shu roomga tegishli tables).
+            # Bitta xona bo'lsa ham 1 qadam tap-through bo'ladi — bir xil UX.
+            self._show_rooms_view()
 
         except Exception as e:
             logger.error("Stol picker yuklashda xato: %s", e)
@@ -421,12 +405,8 @@ class TablePickerDialog(QDialog):
     def _show_tables_view(self, room: str):
         """Bosqich 2: tanlangan xonadagi stollar."""
         self._stack.setCurrentIndex(1)
-        # Bitta xona bo'lsa back tugma ko'rinmaydi (tasodifan bosilmasin)
-        room_names_with_tables = {
-            t.restaurant_room for t in self._all_tables if t.restaurant_room
-        }
-        single_room = len(room_names_with_tables) <= 1
-        self._back_btn.setVisible(not single_room)
+        # Back tugma har doim ko'rinadi — xonalar ro'yxatiga qaytish
+        self._back_btn.setVisible(True)
         room_label = room if room else "Stollar"
         self._title_label.setText(f"{room_label} — stol tanlang")
         self._active_room = room
