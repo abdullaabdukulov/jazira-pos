@@ -732,78 +732,185 @@ class TablePickerDialog(QDialog):
 # ═══════════════════════════════════════════════════════════════
 #  FreeReasonDialog — qo'lda bo'shatish sababini kiritish
 # ═══════════════════════════════════════════════════════════════
+QUICK_FREE_REASONS = [
+    "Mijoz to'lamay ketdi",
+    "Buyurtma bekor qilindi",
+    "Boshqa stolga ko'chirildi",
+    "Stol tashlab ketildi",
+    "Texnik sabab",
+]
+
+
 class FreeReasonDialog(QDialog):
-    """Sodda sabab kiritish dialogi."""
+    """Stol bo'shatish sababi — tezkor sabablar + sensor klaviatura.
+
+    History dagi CancelReasonDialog modeliga o'xshash (consistent UX).
+    """
 
     def __init__(self, parent, table_name: str):
         super().__init__(parent)
         self.reason: str = ""
+        self.table_name = table_name
         self.setWindowTitle("Stol bo'shatish sababi")
         self.setModal(True)
-        self.setFixedSize(s(480), s(280))
+        self.setFixedSize(s(660), s(560))
         self.setStyleSheet("background: white;")
+        self._init_ui()
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(s(20), s(20), s(20), s(20))
-        root.setSpacing(s(14))
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(s(20), s(16), s(20), s(16))
+        layout.setSpacing(s(10))
 
-        title = QLabel(f"Stol {table_name} — bo'shatish")
+        # Title
+        title = QLabel(f"🔓  {self.table_name}  —  Bo'shatish sababi")
         title.setStyleSheet(f"font-size: {font(16)}px; font-weight: 800; color: #0f172a;")
-        root.addWidget(title)
+        layout.addWidget(title)
 
-        hint = QLabel("Iltimos sababni qisqacha yozing:")
-        hint.setStyleSheet(f"font-size: {font(12)}px; color: #64748b;")
-        root.addWidget(hint)
+        # Quick reason chips
+        quick_lbl = QLabel("TEZKOR SABABLAR:")
+        quick_lbl.setStyleSheet(
+            f"font-size: {font(10)}px; color: #94a3b8;"
+            f" font-weight: 700; letter-spacing: 1px;"
+        )
+        layout.addWidget(quick_lbl)
 
-        self._input = QLineEdit()
-        self._input.setPlaceholderText("Masalan: Mijoz to'lamadi va ketib qoldi")
-        self._input.setFixedHeight(s(44))
-        self._input.setStyleSheet(f"""
+        chips_row1 = QHBoxLayout()
+        chips_row1.setSpacing(s(6))
+        chips_row2 = QHBoxLayout()
+        chips_row2.setSpacing(s(6))
+        for i, reason in enumerate(QUICK_FREE_REASONS):
+            btn = QPushButton(reason)
+            btn.setFixedHeight(s(38))
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: #f1f5f9; color: #334155;
+                    font-size: {font(11)}px; font-weight: 600;
+                    border-radius: {s(8)}px; border: 1.5px solid #e2e8f0;
+                    padding: 0 {s(10)}px;
+                }}
+                QPushButton:hover {{
+                    background: #fff7ed; color: #c2410c; border-color: #fdba74;
+                }}
+                QPushButton:pressed {{ background: #ffedd5; }}
+            """)
+            btn.clicked.connect(lambda _, r=reason: self._fill_reason(r))
+            if i < 3:
+                chips_row1.addWidget(btn)
+            else:
+                chips_row2.addWidget(btn)
+        chips_row2.addStretch()
+        layout.addLayout(chips_row1)
+        layout.addLayout(chips_row2)
+
+        # Input display
+        self.input = QLineEdit()
+        self.input.setPlaceholderText("Sabab yozing yoki yuqoridan tanlang...")
+        self.input.setFixedHeight(s(48))
+        self.input.setStyleSheet(f"""
             QLineEdit {{
-                font-size: {font(13)}px; padding: 0 {s(12)}px;
-                border: 1.5px solid #e2e8f0; border-radius: {s(8)}px;
-                color: #0f172a;
+                font-size: {font(14)}px; color: #1e293b;
+                background: white;
+                border: 2px solid #3b82f6;
+                border-radius: {s(10)}px; padding: {s(8)}px {s(14)}px;
             }}
-            QLineEdit:focus {{ border-color: #3b82f6; }}
         """)
-        root.addWidget(self._input)
+        layout.addWidget(self.input)
 
-        root.addStretch()
+        # Sensor klaviatura
+        rows = [
+            ['1','2','3','4','5','6','7','8','9','0','⌫'],
+            ['Q','W','E','R','T','Y','U','I','O','P'],
+            ['A','S','D','F','G','H','J','K','L','CLR'],
+            ['Z','X','C','V','B','N','M','SPACE'],
+        ]
+        for row_keys in rows:
+            row_w = QHBoxLayout()
+            row_w.setSpacing(s(4))
+            for k in row_keys:
+                row_w.addWidget(self._make_key(k))
+            layout.addLayout(row_w)
 
         # Tugmalar
-        row = QHBoxLayout()
+        btn_row = QHBoxLayout()
         cancel_btn = QPushButton("Bekor")
         cancel_btn.setFixedHeight(s(44))
         cancel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: #f1f5f9; color: #475569; padding: 0 {s(18)}px;
-                font-weight: 700; font-size: {font(13)}px;
-                border-radius: {s(8)}px; border: none;
-            }}
+            QPushButton {{ background: #f1f5f9; color: #64748b;
+                font-weight: 700; border-radius: {s(10)}px; border: none; }}
             QPushButton:hover {{ background: #e2e8f0; }}
         """)
         cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
 
-        ok_btn = QPushButton("✓  Bo'shatish")
-        ok_btn.setFixedHeight(s(44))
-        ok_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: #dc2626; color: white; padding: 0 {s(24)}px;
-                font-weight: 800; font-size: {font(13)}px;
-                border-radius: {s(8)}px; border: none;
-            }}
-            QPushButton:hover {{ background: #b91c1c; }}
+        confirm_btn = QPushButton("🔓  Bo'shatish")
+        confirm_btn.setFixedHeight(s(44))
+        confirm_btn.setStyleSheet(f"""
+            QPushButton {{ background: #ea580c; color: white;
+                font-weight: 700; font-size: {font(14)}px;
+                border-radius: {s(10)}px; border: none; }}
+            QPushButton:hover {{ background: #c2410c; }}
         """)
-        ok_btn.clicked.connect(self._accept)
+        confirm_btn.clicked.connect(self._on_confirm)
+        btn_row.addWidget(confirm_btn)
 
-        row.addWidget(cancel_btn, 1)
-        row.addWidget(ok_btn, 2)
-        root.addLayout(row)
+        layout.addLayout(btn_row)
 
-    def _accept(self):
-        txt = self._input.text().strip()
+    def _fill_reason(self, reason: str):
+        self.input.setText(reason)
+        self.input.setStyleSheet(f"""
+            QLineEdit {{
+                font-size: {font(14)}px; color: #1e293b;
+                background: white;
+                border: 2px solid #3b82f6;
+                border-radius: {s(10)}px; padding: {s(8)}px {s(14)}px;
+            }}
+        """)
+
+    def _make_key(self, key):
+        label = '␣' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
+        btn = QPushButton(label)
+        btn.setFixedHeight(s(44))
+        if key == '⌫':
+            style = f"background:#fee2e2; color:#ef4444; font-size:{font(15)}px; font-weight:bold;"
+        elif key == 'CLR':
+            style = f"background:#fff7ed; color:#ea580c; font-size:{font(10)}px; font-weight:bold;"
+        elif key == 'SPACE':
+            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(13)}px; font-weight:bold;"
+            btn.setMinimumWidth(s(80))
+        elif key.isdigit():
+            style = f"background:#f1f5f9; color:#334155; font-size:{font(13)}px; font-weight:700;"
+        else:
+            style = f"background:white; color:#1e293b; font-size:{font(13)}px; font-weight:600;"
+        btn.setStyleSheet(f"""
+            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:{s(6)}px; }}
+            QPushButton:pressed {{ background:#dbeafe; }}
+        """)
+        btn.clicked.connect(lambda _, k=key: self._on_key(k))
+        return btn
+
+    def _on_key(self, key):
+        cur = self.input.text()
+        if key == '⌫':
+            self.input.setText(cur[:-1])
+        elif key == 'CLR':
+            self.input.clear()
+        elif key == 'SPACE':
+            self.input.setText(cur + ' ')
+        else:
+            self.input.setText(cur + key)
+
+    def _on_confirm(self):
+        txt = self.input.text().strip()
         if not txt:
-            InfoDialog(self, "Diqqat", "Iltimos sababni kiriting!", kind="warning").exec()
+            self.input.setStyleSheet(f"""
+                QLineEdit {{
+                    font-size: {font(14)}px; color: #1e293b;
+                    background: #fff5f5;
+                    border: 2px solid #ef4444;
+                    border-radius: {s(10)}px; padding: {s(8)}px {s(14)}px;
+                }}
+            """)
             return
         self.reason = txt
         self.accept()
