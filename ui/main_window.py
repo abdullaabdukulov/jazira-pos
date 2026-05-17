@@ -769,7 +769,12 @@ class MainWindow(QMainWindow):
     def open_table_picker(self, cart: CartWidget):
         cfg = load_config()
         current_tbl = (cart.selected_table or {}).get("name", "")
-        dlg = TablePickerDialog(self, self.api, current_table=current_tbl)
+        dlg = TablePickerDialog(
+            self, self.api,
+            current_table=current_tbl,
+            active_cashier=self.get_active_cashier_name(),
+            active_cashier_role=self.get_active_cashier_role(),
+        )
         # Realtime handler dialogga ulanishi uchun reference saqlash
         self._active_table_picker = dlg
         try:

@@ -67,20 +67,31 @@ class RefreshTablesWorker(QThread):
 
 
 class FreeTableWorker(QThread):
-    """Stolni qo'lda bo'shatish workeri (freeTable API)."""
+    """Stolni qo'lda bo'shatish workeri (freeTable API).
+
+    Server tomon Ofitsant rolini rad etadi — active_cashier_role uzatamiz.
+    """
     result_ready = pyqtSignal(bool, str)
 
-    def __init__(self, api: FrappeAPI, table: str, reason: str):
+    def __init__(self, api: FrappeAPI, table: str, reason: str,
+                 active_cashier: str = "", active_cashier_role: str = "Kassir"):
         super().__init__()
         self.api = api
         self.table = table
         self.reason = reason
+        self.active_cashier = active_cashier
+        self.active_cashier_role = active_cashier_role
 
     def run(self):
         try:
             ok, resp = self.api.call_method(
                 "ury.ury_pos.api.freeTable",
-                {"table": self.table, "reason": self.reason},
+                {
+                    "table": self.table,
+                    "reason": self.reason,
+                    "active_cashier": self.active_cashier,
+                    "active_cashier_role": self.active_cashier_role,
+                },
             )
             if ok and isinstance(resp, dict) and resp.get("status") == "ok":
                 self.result_ready.emit(True, "Stol bo'shatildi")
@@ -198,11 +209,14 @@ class TablePickerDialog(QDialog):
     """
     table_freed_signal = pyqtSignal(str)  # qo'lda bo'shatish bo'lganda
 
-    def __init__(self, parent, api: FrappeAPI, current_table: str = ""):
+    def __init__(self, parent, api: FrappeAPI, current_table: str = "",
+                 active_cashier: str = "", active_cashier_role: str = "Kassir"):
         super().__init__(parent)
         self.api = api
         self.selected_table: dict | None = None
         self._current_table = current_table
+        self._active_cashier = active_cashier
+        self._active_cashier_role = active_cashier_role or "Kassir"
         self._room_buttons: dict[str, QPushButton] = {}
         self._table_buttons: dict[str, TableButton] = {}
         self._active_room: str = ""
@@ -636,7 +650,9 @@ class TablePickerDialog(QDialog):
         )
         # Faqat bo'sh stol tanlash mumkin (lekin band stolni ko'rsatishga ruxsat)
         self._select_btn.setEnabled(not t.occupied)
-        self._free_btn.setVisible(bool(t.occupied))
+        # Bo'shatish tugmasi — faqat kassir uchun va band stol bo'lsa
+        is_kassir = self._active_cashier_role != "Ofitsant"
+        self._free_btn.setVisible(bool(t.occupied) and is_kassir)
         self._selected_doc = t
 
     def _on_select(self):
@@ -658,6 +674,16 @@ class TablePickerDialog(QDialog):
         t: RestaurantTable = getattr(self, "_selected_doc", None)
         if not t:
             return
+
+        # Ofitsant stol bo'shata olmaydi (UI darajasida ham, server ham bloklaydi)
+        if self._active_cashier_role == "Ofitsant":
+            InfoDialog(
+                self, "Ruxsat yo'q",
+                "Ofitsant stolni bo'shata olmaydi.\nKassirga murojaat qiling.",
+                kind="info",
+            ).exec()
+            return
+
         dlg = FreeReasonDialog(self, t.name)
         dlg.exec()
         reason = dlg.reason
@@ -666,7 +692,11 @@ class TablePickerDialog(QDialog):
 
         self._free_btn.setEnabled(False)
         self._free_btn.setText("Bo'shatilmoqda...")
-        self._worker = FreeTableWorker(self.api, t.name, reason)
+        self._worker = FreeTableWorker(
+            self.api, t.name, reason,
+            active_cashier=self._active_cashier,
+            active_cashier_role=self._active_cashier_role,
+        )
         self._worker.result_ready.connect(self._on_free_done)
         self._worker.start()
 
