@@ -40,12 +40,34 @@ REALTIME_EVENTS = (
 
 
 def derive_socketio_url(frappe_url: str, port: int = 9000) -> str:
-    """`http://host:8000` → `http://host:9000`."""
+    """Frappe URLdan SocketIO URLini hisoblash.
+
+    Variants:
+    - Lokal dev: `http://host:8000` → `http://host:9000`
+    - Cloud HTTPS: `https://example.com` → `https://example.com` (nginx proxylaydi)
+    - Cloud HTTP standard port: `http://example.com` → `http://example.com`
+
+    Frappe production deploymentlari (nginx reverse proxy) `/socket.io/` ni
+    asosiy HTTPS port (443) orqali yo'naltiradi. Faqat lokal dev da
+    alohida 9000 portga ulanish kerak.
+    """
     if not frappe_url:
         return ""
     p = urlparse(frappe_url)
     host = p.hostname or "127.0.0.1"
     scheme = p.scheme or "http"
+    explicit_port = p.port
+
+    # Standard web ports (cloud / production) — alohida port qo'shilmaydi
+    if explicit_port is None:
+        # https://example.com yoki http://example.com — same origin
+        return urlunparse((scheme, host, "", "", "", ""))
+
+    if explicit_port in (80, 443):
+        # http://example.com:80 yoki https://example.com:443 — same origin
+        return urlunparse((scheme, host, "", "", "", ""))
+
+    # Lokal dev — 8000 yoki boshqa explicit port → 9000 ga o'tish
     return urlunparse((scheme, f"{host}:{port}", "", "", "", ""))
 
 
@@ -152,17 +174,22 @@ class RealtimeClient(QObject):
             logger.warning("sid cookie topilmadi — SocketIO bog'lanmaydi")
             return
 
+        logger.info("SocketIO connect → %s (path=/socket.io/, sid=%s...)",
+                    self.url, sid[:8] if sid else "")
+
         try:
+            # Frappe Realtime: namespace ni explicit '/' beramiz.
+            # socketio_path Frappe nginx config'iga mos keladi.
             self.sio.connect(
                 self.url,
                 headers={"Cookie": cookie_str} if cookie_str else {},
                 auth={"sid": sid},
                 transports=["websocket", "polling"],
+                socketio_path="/socket.io/",
                 wait=False,
             )
-            logger.info("SocketIO start: %s", self.url)
         except Exception as e:
-            logger.error("SocketIO start xatosi: %s", e)
+            logger.error("SocketIO start xatosi: %s (URL=%s)", e, self.url)
             self.error.emit(str(e))
 
     def stop(self):
