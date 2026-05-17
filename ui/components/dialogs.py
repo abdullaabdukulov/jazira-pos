@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QLineEdit,
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from ui.scale import s, font
 
 
@@ -22,54 +22,111 @@ class ClickableLineEdit(QLineEdit):
 
 
 class InfoDialog(QDialog):
-    """kind: 'success' | 'warning' | 'error'"""
-    _ICONS = {"success": "✓", "warning": "⚠️", "error": "✕"}
-    _COLORS = {"success": "#16a34a", "warning": "#d97706", "error": "#dc2626"}
-    _BG = {"success": "#f0fdf4", "warning": "#fffbeb", "error": "#fef2f2"}
-    _BORDER = {"success": "#bbf7d0", "warning": "#fde68a", "error": "#fecaca"}
+    """kind: 'success' | 'warning' | 'error' | 'info'
 
-    def __init__(self, parent, title: str, message: str, kind: str = "success"):
+    `icon` parametri orqali default emoji o'rniga ixtiyoriy ikona ko'rsatish
+    mumkin (masalan printer xatosi uchun 🖨️).
+    """
+    _ICONS = {"success": "✓", "warning": "!", "error": "✕", "info": "i"}
+    _COLORS = {
+        "success": "#16a34a",
+        "warning": "#0369a1",   # qizil/sariq emas — yumshoqroq ko'k
+        "error": "#dc2626",
+        "info": "#0369a1",
+    }
+    _BG = {
+        "success": "#f0fdf4",
+        "warning": "#eff6ff",
+        "error": "#fef2f2",
+        "info": "#eff6ff",
+    }
+    _BORDER = {
+        "success": "#bbf7d0",
+        "warning": "#bfdbfe",
+        "error": "#fecaca",
+        "info": "#bfdbfe",
+    }
+
+    def __init__(self, parent, title: str, message: str,
+                 kind: str = "success", icon: str = None):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setFixedWidth(s(380))
+        # Fixed o'rniga min/max — uzun matn uchun keng bo'lsin
+        self.setMinimumWidth(s(440))
+        self.setMaximumWidth(s(640))
         self.setStyleSheet("background: white;")
+        self.setSizeGripEnabled(False)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(s(22), s(18), s(22), s(18))
-        layout.setSpacing(s(12))
+        layout.setContentsMargins(s(24), s(20), s(24), s(20))
+        layout.setSpacing(s(14))
 
+        # ── Top row: icon + title ─────────────────
         top = QHBoxLayout()
-        ic = QLabel(self._ICONS.get(kind, "ℹ"))
+        top.setSpacing(s(14))
+        top.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        ic_text = icon if icon is not None else self._ICONS.get(kind, "i")
+        ic = QLabel(ic_text)
+        ic.setFixedSize(s(44), s(44))
+        ic.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ic.setStyleSheet(
-            f"font-size:{font(26)}px; background:{self._BG.get(kind, '#f8fafc')};"
+            f"font-size:{font(22)}px; font-weight:800;"
+            f"color:{self._COLORS.get(kind, '#0369a1')};"
+            f"background:{self._BG.get(kind, '#f8fafc')};"
             f"border:1.5px solid {self._BORDER.get(kind, '#e2e8f0')};"
-            f"border-radius:{s(10)}px; padding:{s(6)}px {s(12)}px;"
+            f"border-radius:{s(22)}px;"
         )
         top.addWidget(ic)
+
         ttl = QLabel(title)
-        ttl.setStyleSheet(f"font-size:{font(16)}px; font-weight:800; color:{self._COLORS.get(kind, '#1e293b')};")
+        ttl.setStyleSheet(
+            f"font-size:{font(17)}px; font-weight:800;"
+            f"color:#0f172a; background:transparent;"
+        )
+        ttl.setWordWrap(True)
         top.addWidget(ttl, 1)
         layout.addLayout(top)
 
+        # ── Separator ─────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setStyleSheet("background:#f1f5f9; max-height:1px;")
         layout.addWidget(sep)
 
+        # ── Message ───────────────────────────────
         msg = QLabel(message)
         msg.setWordWrap(True)
-        msg.setStyleSheet(f"font-size:{font(13)}px; color:#334155; line-height:1.5;")
-        layout.addWidget(msg)
+        msg.setMinimumHeight(s(40))
+        msg.setStyleSheet(
+            f"font-size:{font(13)}px; color:#334155; background:transparent;"
+            f" padding:{s(4)}px 0;"
+        )
+        msg.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        msg.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(msg, 1)
 
-        ok = QPushButton("OK")
-        ok.setFixedHeight(s(42))
+        # ── OK button ─────────────────────────────
+        btn_color = self._COLORS.get(kind, "#0369a1")
+        ok = QPushButton("Tushunarli")
+        ok.setFixedHeight(s(44))
+        ok.setMinimumWidth(s(140))
         ok.setStyleSheet(
-            f"QPushButton{{background:{self._COLORS.get(kind, '#3b82f6')};"
-            f"color:white;font-weight:700;border-radius:{s(10)}px;border:none;}}"
-            f"QPushButton:hover{{opacity:0.9;}}"
+            f"QPushButton{{background:{btn_color}; color:white;"
+            f"font-weight:700; font-size:{font(13)}px;"
+            f"border-radius:{s(10)}px; border:none; padding:0 {s(20)}px;}}"
+            f"QPushButton:hover{{background:{btn_color}; opacity:0.9;}}"
+            f"QPushButton:pressed{{background:#0f172a;}}"
         )
         ok.clicked.connect(self.accept)
-        layout.addWidget(ok)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(ok)
+        layout.addLayout(btn_row)
+
+        # Content ga qarab o'lcham
+        self.adjustSize()
 
 
 class ConfirmDialog(QDialog):

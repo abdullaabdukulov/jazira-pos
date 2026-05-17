@@ -599,11 +599,14 @@ class CheckoutWindow(QDialog):
         super().reject()
 
     def _show_printer_warning(self, failed_printers: list):
-        """Printer xatosi haqida foydalanuvchiga ogohlantirish"""
+        """Printer xatosi haqida foydalanuvchiga ogohlantirish (yumshoq)."""
         from ui.components.dialogs import InfoDialog
         names = ", ".join(failed_printers)
         InfoDialog(
-            self, "Printer xatosi",
-            f"Quyidagi printerlar chop etilmadi:\n{names}\n\nBuyurtma saqlandi.",
-            kind="warning",
+            self, "Printer ulanmagan",
+            f"To'lov muvaffaqiyatli yakunlandi ✓\n\n"
+            f"Lekin chek printeri ({names}) ulanmagan.\n"
+            f"Iltimos, printerni tekshiring yoki chekni qo'lda yetkazing.",
+            kind="info",
+            icon="🖨️",
         ).exec()

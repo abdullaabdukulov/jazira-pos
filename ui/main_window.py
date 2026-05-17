@@ -718,12 +718,15 @@ class MainWindow(QMainWindow):
             failed = [k for k, v in results.items() if not v]
             if failed:
                 logger.warning("KOT printerlar chop etilmadi: %s", ", ".join(failed))
+                names = ", ".join(failed)
                 InfoDialog(
-                    self, "Printer xatosi",
-                    f"Quyidagi oshxona printerlari chop etilmadi:\n{', '.join(failed)}\n\n"
-                    "Buyurtma serverda saqlangan, lekin oshxona qog'ozini\n"
-                    "qo'lda etkazib bering.",
-                    kind="warning",
+                    self, "Oshxona printeri ulanmagan",
+                    f"Buyurtma saqlandi ✓\n\n"
+                    f"Lekin oshxona printeri ({names}) chop etmadi.\n"
+                    f"Iltimos, buyurtmani oshxonaga og'zaki yetkazib bering "
+                    f"yoki printerni tekshiring.",
+                    kind="info",
+                    icon="🖨️",
                 ).exec()
         except Exception as e:
             logger.error("KOT chop etish xatosi (save): %s", e)
