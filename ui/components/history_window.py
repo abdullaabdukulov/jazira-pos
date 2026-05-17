@@ -2,15 +2,16 @@ import json
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFrame, QLineEdit,
+    QFrame, QLineEdit,
     QScroller, QScrollerProperties,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import HISTORY_FETCH_LIMIT
 from ui.scale import s, font
 from database.models import PendingInvoice
+from ui.components.dialogs import InfoDialog
 
 logger = get_logger(__name__)
 
@@ -443,7 +444,10 @@ class TransactionDetailDialog(QDialog):
 
     def _on_loaded(self, success: bool, doc: dict):
         if not success:
-            QMessageBox.warning(self, "Xato", "Tafsilotlarni yuklab bo'lmadi.")
+            InfoDialog(self, "Yuklab bo'lmadi",
+                       "Buyurtma tafsilotlarini yuklab bo'lmadi.\n"
+                       "Tarmoqni tekshiring va qaytadan urinib ko'ring.",
+                       kind="info").exec()
             return
 
         items = doc.get("items", [])
@@ -949,7 +953,7 @@ class HistoryWindow(QWidget):
                 "Oshxona/bar xabardor qilindi.\n"
                 "Manager ERPNext da ko'rib tasdiqlaydi."
             )
-            QMessageBox.information(self, "So'rov yuborildi", msg)
+            InfoDialog(self, "So'rov yuborildi", msg, kind="success").exec()
             # Production unitlarga "QAYTARILDI" stikeri
             if order_data.get("items"):
                 try:
@@ -962,7 +966,7 @@ class HistoryWindow(QWidget):
                 except Exception as e:
                     logger.error("Bekor stikeri chop etishda xatolik: %s", e)
         else:
-            QMessageBox.warning(self, "Xatolik", message)
+            InfoDialog(self, "Bekor qilinmadi", message, kind="info").exec()
         self.load_history()
 
     def _confirm_cancel_offline(self, pending_id: int, invoice_data_json: str):
@@ -985,7 +989,9 @@ class HistoryWindow(QWidget):
                 error_message=f"Bekor kutilmoqda: {reason}",
             ).where(PendingInvoice.id == pending_id).execute()
         except Exception as e:
-            QMessageBox.warning(self, "Xatolik", f"Oflayn bekor qilishda xatolik: {e}")
+            InfoDialog(self, "Xatolik",
+                       f"Oflayn buyurtmani bekor qilishda muammo:\n{e}",
+                       kind="info").exec()
             return
 
         # Production unitlarga QAYTARILDI stikeri
@@ -1016,7 +1022,11 @@ class HistoryWindow(QWidget):
             except Exception as e:
                 logger.error("Bekor stikeri chop etishda xatolik: %s", e)
 
-        QMessageBox.information(self, "Bekor qilindi", "Oflayn buyurtma bekor qilindi.\nOshxona xabardor qilindi.")
+        InfoDialog(
+            self, "Bekor qilindi",
+            "Oflayn buyurtma bekor qilindi ✓\nOshxona xabardor qilindi.",
+            kind="success",
+        ).exec()
         self.load_history()
 
     def _reprint(self, invoice_id: str, btn: QPushButton):
@@ -1034,9 +1044,25 @@ class HistoryWindow(QWidget):
         self.reprint_worker.start()
 
     def _on_reprint_finished(self, success: bool, message: str, btn: QPushButton):
+        # Tugmani qaytarish (widget o'chirilgan bo'lishi mumkin)
         try:
             btn.setEnabled(True)
             btn.setText("🖨 Chop")
         except RuntimeError:
-            pass  # Widget allaqachon o'chirilgan
-        QMessageBox.information(self, "Chop etish natijasi", message)
+            pass
+
+        # Worker QThread tugashini kutmasdan dialog ko'rsatsak segfault bo'lishi
+        # mumkin (SocketIO thread + modal dialog race). QTimer orqali keyingi
+        # event loop iteratsiyasiga kechiktiramiz.
+        QTimer.singleShot(0, lambda: self._show_reprint_result(success, message))
+
+    def _show_reprint_result(self, success: bool, message: str):
+        try:
+            if success:
+                InfoDialog(self, "Chop etildi", message, kind="success").exec()
+            else:
+                InfoDialog(self, "Printer ulanmagan", message,
+                           kind="info", icon="🖨️").exec()
+        except RuntimeError:
+            # Widget destroyed — info dialog yo'q
+            logger.debug("Reprint natija dialog widget destroyed: %s", message)
