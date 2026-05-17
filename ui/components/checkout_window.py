@@ -88,6 +88,9 @@ class CheckoutWorker(QThread):
             self.result_ready.emit(False, f"To'lovda xatolik: {e}")
 
     def _make_invoice(self, invoice_name: str):
+        # KPI: pending dan to'lov bo'lsa, server invoice.cashier ni shu kassir
+        # email'iga yangilaydi (waiter — ofitsant — o'zgartirilmaydi).
+        # active_cashier — aktiv kassirning ismi (chek va custom field uchun).
         payment_payload = {
             "customer": self.invoice_data.get("customer"),
             "payments": self.payments,
@@ -97,6 +100,8 @@ class CheckoutWorker(QThread):
             "additionalDiscount": 0,
             "table": None,
             "invoice": invoice_name,
+            "active_cashier": self.invoice_data.get("active_cashier", ""),
+            "active_cashier_role": self.invoice_data.get("active_cashier_role", "Kassir"),
         }
         submit_success, submit_response = self.api.call_method(
             "ury.ury.doctype.ury_order.ury_order.make_invoice", payment_payload
@@ -505,6 +510,18 @@ class CheckoutWindow(QDialog):
 
         config = load_config()
 
+        # KPI uchun (TZ Phase 3):
+        # - cashier = to'lov qabul qilayotgan aktiv kassirning email'i
+        #   (POS Profile default emas — haqiqiy kassir ismida ko'rinishi kerak)
+        # - waiter = zakazni qabul qilgan foydalanuvchi.
+        #   Yangi to'lov (saqlashsiz): kassir o'zi → cashier bilan bir xil.
+        #   Pending dan to'lov: ofitsant qo'ygan, kassir to'laydi → cashier
+        #   yangilanadi, lekin waiter (ofitsant) o'zgartirilmaydi (server make_invoice).
+        active_user = str(self.order_data.get("active_cashier_user") or "")
+        default_user = str(config.get("cashier", "Administrator"))
+        cashier_user = active_user or default_user
+        waiter_user = active_user or default_user
+
         payload = {
             "items": [
                 {
@@ -516,13 +533,13 @@ class CheckoutWindow(QDialog):
                 }
                 for i in self.order_data["items"]
             ],
-            "cashier": str(config.get("cashier", "Administrator")),
+            "cashier": cashier_user,
             "owner": str(config.get("owner", "Administrator")),
             "mode_of_payment": payments[0]["mode_of_payment"] if payments else (config.get("payment_methods") or ["Cash"])[0],
             "customer": str(self.order_data.get("customer") or config.get("default_customer", "")),
             "no_of_pax": 1,
             "last_invoice": "",
-            "waiter": str(config.get("cashier", "Administrator")),  # server API talab qiladi
+            "waiter": waiter_user,
             "pos_profile": str(config.get("pos_profile", "")),
             "order_type": ORDER_TYPE_MAP.get(self.order_data.get("order_type", "Shu yerda"), "Dine In"),
             "ticket_number": (

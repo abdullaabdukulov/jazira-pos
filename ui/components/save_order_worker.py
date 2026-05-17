@@ -39,6 +39,23 @@ class SaveOrderWorker(QThread):
         try:
             config = load_config()
 
+            # KPI uchun (TZ Phase 3):
+            # - waiter = zakazni qabul qilgan foydalanuvchi (Ofitsant yoki Kassir).
+            #   Aktiv URY POS Cashier'ning email'i (`user`).
+            # - cashier = to'lov qabul qiluvchi kassir. SaveOrderWorker payti hali
+            #   to'lov yo'q — placeholder sifatida config.cashier (POS Profile default).
+            #   make_invoice paytida haqiqiy kassirga yangilanadi.
+            active_user = str(self.order_data.get("active_cashier_user") or "")
+            default_cashier = str(config.get("cashier", "Administrator"))
+
+            if self.role == "Ofitsant":
+                waiter_user = active_user or default_cashier
+                cashier_user = default_cashier  # placeholder — kassir keyin to'laydi
+            else:
+                # Kassir o'zi yozadi va to'laydi
+                waiter_user = active_user or default_cashier
+                cashier_user = active_user or default_cashier
+
             payload = {
                 "items": [
                     {
@@ -50,13 +67,13 @@ class SaveOrderWorker(QThread):
                     }
                     for i in self.order_data["items"]
                 ],
-                "cashier": str(config.get("cashier", "Administrator")),
+                "cashier": cashier_user,
                 "owner": str(config.get("owner", "Administrator")),
                 "mode_of_payment": (config.get("payment_methods") or ["Cash"])[0],
                 "customer": str(self.order_data.get("customer") or config.get("default_customer", "")),
                 "no_of_pax": 1,
                 "last_invoice": "",
-                "waiter": str(config.get("cashier", "Administrator")),
+                "waiter": waiter_user,
                 "pos_profile": str(config.get("pos_profile", "")),
                 "order_type": ORDER_TYPE_MAP.get(
                     self.order_data.get("order_type", "Shu yerda"), "Dine In"

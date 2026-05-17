@@ -123,20 +123,35 @@ class FetchPendingCountWorker(QThread):
 
 
 class CancelPendingWorker(QThread):
-    """cancelPendingOrder ni chaqiradi."""
+    """cancelPendingOrder ni chaqiradi.
+
+    KPI uchun bekor qilgan kassir ham yuboriladi — server tomon invoice.cashier
+    yangilanadi va invoice o'chirilmaydi (custom_cancelled=1).
+    """
     result_ready = pyqtSignal(bool, str)
 
-    def __init__(self, api: FrappeAPI, invoice: str, reason: str):
+    def __init__(self, api: FrappeAPI, invoice: str, reason: str,
+                 cashier_user: str = "", active_cashier: str = "",
+                 active_cashier_role: str = "Kassir"):
         super().__init__()
         self.api = api
         self.invoice = invoice
         self.reason = reason
+        self.cashier_user = cashier_user
+        self.active_cashier = active_cashier
+        self.active_cashier_role = active_cashier_role
 
     def run(self):
         try:
             ok, resp = self.api.call_method(
                 "ury.ury_pos.api.cancelPendingOrder",
-                {"invoice": self.invoice, "reason": self.reason},
+                {
+                    "invoice": self.invoice,
+                    "reason": self.reason,
+                    "cashier": self.cashier_user,
+                    "active_cashier": self.active_cashier,
+                    "active_cashier_role": self.active_cashier_role,
+                },
             )
             if ok and isinstance(resp, dict) and resp.get("status") == "ok":
                 self.result_ready.emit(True, "Buyurtma bekor qilindi")
@@ -197,6 +212,7 @@ class PendingOrdersWindow(QWidget):
         self.active_order_type = ""    # "" = hammasi, "Dine In", "Take Away", ...
         self._role = "Kassir"
         self._mine_name = ""           # active_cashier.full_name
+        self._mine_user = ""           # active_cashier.user (email) — KPI uchun
         self._chip_buttons: dict[str, QPushButton] = {}
         self._init_ui()
 
@@ -370,10 +386,15 @@ class PendingOrdersWindow(QWidget):
         self.load_pending()
 
     # ── Role boshqaruvi ───────────────────────
-    def set_role_and_name(self, role: str, name: str):
-        """Ofitsant rolida only_mine=True, action tugmalari yashirin."""
+    def set_role_and_name(self, role: str, name: str, user: str = ""):
+        """Ofitsant rolida only_mine=True, action tugmalari yashirin.
+
+        `user` — aktiv kassir/ofitsantning Frappe User email'i (KPI uchun
+        cancel/to'lov payti server'ga yuborish).
+        """
         self._role = role or "Kassir"
         self._mine_name = name or ""
+        self._mine_user = user or ""
 
     # ── Yuklash ───────────────────────────────
     def load_pending(self):
@@ -526,6 +547,11 @@ class PendingOrdersWindow(QWidget):
         if not invoice:
             return
 
+        # Faqat kassir bekor qila oladi (UI darajasida tugma yashirin, lekin
+        # ehtiyot uchun ham tekshiramiz)
+        if self._role == "Ofitsant":
+            return
+
         # History window dagi tezkor sabablar + sensor klaviatura bilan dialog
         from ui.components.history_window import CancelReasonDialog
         dlg = CancelReasonDialog(self, invoice)
@@ -535,7 +561,13 @@ class PendingOrdersWindow(QWidget):
         if not reason:
             return
 
-        self._cancel_worker = CancelPendingWorker(self.api, invoice, reason)
+        # KPI: bekor qilgan kassir invoice ga biriktiriladi
+        self._cancel_worker = CancelPendingWorker(
+            self.api, invoice, reason,
+            cashier_user=self._mine_user,
+            active_cashier=self._mine_name,
+            active_cashier_role=self._role,
+        )
         self._cancel_worker.result_ready.connect(self._on_cancel_done)
         self._cancel_worker.start()
 

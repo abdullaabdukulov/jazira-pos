@@ -452,6 +452,12 @@ class MainWindow(QMainWindow):
             return self.active_cashier.get("role") or "Kassir"
         return "Kassir"
 
+    def get_active_cashier_user(self) -> str:
+        """Faol kassirning Frappe User email'i — KPI uchun cashier/waiter field'iga."""
+        if self.active_cashier:
+            return self.active_cashier.get("user", "") or ""
+        return ""
+
     def is_waiter(self) -> bool:
         return self.get_active_cashier_role() == "Ofitsant"
 
@@ -655,6 +661,7 @@ class MainWindow(QMainWindow):
     def on_checkout(self, order_data: dict):
         order_data["active_cashier"] = self.get_active_cashier_name()
         order_data["active_cashier_role"] = self.get_active_cashier_role()
+        order_data["active_cashier_user"] = self.get_active_cashier_user()
         dialog = CheckoutWindow(self, order_data, self.api)
         dialog.checkout_completed.connect(self.on_checkout_completed)
         dialog.exec()
@@ -672,6 +679,7 @@ class MainWindow(QMainWindow):
     def on_save_order(self, order_data: dict):
         order_data["active_cashier"] = self.get_active_cashier_name()
         order_data["active_cashier_role"] = self.get_active_cashier_role()
+        order_data["active_cashier_user"] = self.get_active_cashier_user()
         # Print payti uchun order_data ni saqlab qo'yamiz (worker async tugagach kerak)
         self._last_save_order_data = dict(order_data)
         self._save_worker = SaveOrderWorker(
@@ -757,10 +765,11 @@ class MainWindow(QMainWindow):
         self.history_panel.setVisible(False)
         self.shifts_panel.setVisible(False)
         self.offline_panel.setVisible(False)
-        # Role + name set
+        # Role + name + user set (KPI: kim cancel qildi, kim to'lov qildi)
         self.pending_panel.set_role_and_name(
             self.get_active_cashier_role(),
             self.get_active_cashier_name(),
+            self.get_active_cashier_user(),
         )
         self.pending_panel.setVisible(True)
         self.pending_panel.load_pending()
@@ -786,6 +795,7 @@ class MainWindow(QMainWindow):
             "comment": detail.get("custom_comments", ""),
             "active_cashier": self.get_active_cashier_name(),
             "active_cashier_role": self.get_active_cashier_role(),
+            "active_cashier_user": self.get_active_cashier_user(),
             "existing_invoice": detail.get("name", ""),     # CheckoutWorker buni inobatga oladi (Phase 3)
         }
         dialog = CheckoutWindow(self, order_data, self.api)
