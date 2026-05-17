@@ -103,11 +103,57 @@ class TableButton(QPushButton):
         self._build()
 
     def _build(self):
-        seats_txt = f"{self.table_doc.no_of_seats}o'rin" if self.table_doc.no_of_seats else ""
-        # Label: "5\n4o'rin"
-        self.setText(f"{self.table_doc.name}\n{seats_txt}")
+        from PyQt6.QtCore import Qt as _Qt
+        # Tugma bo'sh — content QVBoxLayout orqali joylashtiriladi
+        self.setText("")
         self.setCheckable(True)
-        self.setMinimumSize(s(80), s(70))
+        self.setMinimumSize(s(120), s(110))
+
+        # Eski layoutni tozalash (rebuild paytida)
+        old_layout = self.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                it = old_layout.takeAt(0)
+                w = it.widget()
+                if w:
+                    w.deleteLater()
+            QWidget().setLayout(old_layout)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(s(10), s(12), s(10), s(12))
+        layout.setSpacing(s(4))
+        layout.setAlignment(_Qt.AlignmentFlag.AlignCenter)
+
+        # Asosiy nom — katta
+        self._name_lbl = QLabel(self.table_doc.name)
+        self._name_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
+        self._name_lbl.setStyleSheet(
+            f"font-size: {font(18)}px; font-weight: 900; background: transparent;"
+        )
+        layout.addWidget(self._name_lbl)
+
+        # O'rin soni — kichikroq
+        seats = self.table_doc.no_of_seats or 0
+        if seats:
+            self._seats_lbl = QLabel(f"👤 {seats} o'rin")
+            self._seats_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
+            self._seats_lbl.setStyleSheet(
+                f"font-size: {font(11)}px; font-weight: 600;"
+                f"background: transparent; letter-spacing: 0.3px;"
+            )
+            layout.addWidget(self._seats_lbl)
+
+        # Holat badge — band bo'lsa
+        if self.table_doc.occupied:
+            self._status_lbl = QLabel("BAND")
+            self._status_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
+            self._status_lbl.setStyleSheet(
+                f"font-size: {font(9)}px; font-weight: 800; color: white;"
+                f"background: #dc2626; border-radius: {s(4)}px;"
+                f"padding: {s(2)}px {s(8)}px; letter-spacing: 1px;"
+            )
+            layout.addWidget(self._status_lbl, alignment=_Qt.AlignmentFlag.AlignCenter)
+
         self._apply_style()
 
     def _apply_style(self):
@@ -119,22 +165,20 @@ class TableButton(QPushButton):
             bg, border, color = _FREE_BG, _FREE_BORDER, _FREE_TEXT
 
         self.setStyleSheet(f"""
-            QPushButton {{
+            TableButton {{
                 background: {bg};
                 color: {color};
                 border: 2px solid {border};
-                border-radius: {s(10)}px;
-                font-size: {font(13)}px;
-                font-weight: 700;
-                padding: {s(4)}px;
+                border-radius: {s(14)}px;
             }}
-            QPushButton:hover {{
-                border-width: 3px;
+            TableButton:hover {{
+                border: 3px solid {border};
+                background: white;
             }}
-            QPushButton:pressed {{
+            TableButton:pressed {{
                 background: {border};
-                color: white;
             }}
+            QLabel {{ color: {color}; }}
         """)
 
     def set_selected(self, sel: bool):
@@ -559,12 +603,12 @@ class TablePickerDialog(QDialog):
     def _render_grid_layout(self, tables):
         """Layout yo'q bo'lsa — 5 ustunli grid (fallback)."""
         grid = QGridLayout(self._canvas)
-        grid.setSpacing(s(10))
-        grid.setContentsMargins(s(12), s(12), s(12), s(12))
+        grid.setSpacing(s(14))
+        grid.setContentsMargins(s(20), s(20), s(20), s(20))
         cols = 5
         for i, t in enumerate(tables):
             btn = TableButton(t)
-            btn.setFixedSize(s(120), s(90))
+            btn.setFixedSize(s(140), s(120))
             btn.clicked.connect(lambda checked, b=btn: self._on_table_clicked(b))
             self._table_buttons[t.name] = btn
             grid.addWidget(btn, i // cols, i % cols)
