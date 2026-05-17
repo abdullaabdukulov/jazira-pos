@@ -82,7 +82,7 @@ class SaveOrderWorker(QThread):
                     int(self.order_data.get("ticket_number", 0))
                     if self.order_data.get("ticket_number") else 0
                 ),
-                "comments": str(self.order_data.get("comment", "")),
+                "comments": str(self.order_data.get("comment") or ""),
                 "table": str(self.order_data.get("restaurant_table", "")) or None,
                 "room": "",
                 "aggregator_id": "",

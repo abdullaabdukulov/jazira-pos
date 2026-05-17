@@ -547,7 +547,7 @@ class CheckoutWindow(QDialog):
                 if self.order_data.get("ticket_number")
                 else 0
             ),
-            "comments": str(self.order_data.get("comment", "")),
+            "comments": str(self.order_data.get("comment") or ""),
             "room": "",
             "aggregator_id": "",
             "total_amount": float(self.total_amount),
