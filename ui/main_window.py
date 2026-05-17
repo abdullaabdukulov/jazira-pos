@@ -672,6 +672,8 @@ class MainWindow(QMainWindow):
     def on_save_order(self, order_data: dict):
         order_data["active_cashier"] = self.get_active_cashier_name()
         order_data["active_cashier_role"] = self.get_active_cashier_role()
+        # Print payti uchun order_data ni saqlab qo'yamiz (worker async tugagach kerak)
+        self._last_save_order_data = dict(order_data)
         self._save_worker = SaveOrderWorker(
             order_data, self.api, role=self.get_active_cashier_role()
         )
@@ -683,6 +685,9 @@ class MainWindow(QMainWindow):
     def _on_save_done(self, success: bool, message: str, invoice_name: str):
         self.status_label.setText(message)
         if success:
+            # KOT (oshxona chek) chop etish — mijoz cheki YO'Q (hali to'lov bo'lmagan)
+            self._print_kot_for_save(invoice_name)
+
             InfoDialog(self, "Saqlandi", message, kind="success").exec()
             active_cart = self.sales_tabs.currentWidget()
             if active_cart:
@@ -693,6 +698,37 @@ class MainWindow(QMainWindow):
         else:
             # Ofitsant rolida tarmoq xatosi bo'lsa Phase 2 da blok overlay chiqadi
             InfoDialog(self, "Xatolik", message, kind="error").exec()
+
+    def _print_kot_for_save(self, invoice_name: str = ""):
+        """Saqlash flowida faqat oshxona (production) cheklarini chop etish.
+
+        Mijoz cheki to'lov paytida chiqadi (TZ 4.2 — KOT darhol, mijoz cheki keyin).
+        Ofitsant rolida ham KOT darhol oshxonaga ketishi kerak.
+        """
+        order_data = getattr(self, "_last_save_order_data", None)
+        if not order_data:
+            return
+        try:
+            from core.printer import print_receipt
+            results = print_receipt(
+                self, order_data, [],
+                include_customer=False,
+                include_production=True,
+            )
+            failed = [k for k, v in results.items() if not v]
+            if failed:
+                logger.warning("KOT printerlar chop etilmadi: %s", ", ".join(failed))
+                InfoDialog(
+                    self, "Printer xatosi",
+                    f"Quyidagi oshxona printerlari chop etilmadi:\n{', '.join(failed)}\n\n"
+                    "Buyurtma serverda saqlangan, lekin oshxona qog'ozini\n"
+                    "qo'lda etkazib bering.",
+                    kind="warning",
+                ).exec()
+        except Exception as e:
+            logger.error("KOT chop etish xatosi (save): %s", e)
+        finally:
+            self._last_save_order_data = None
 
     # ── TZ 4.1: Stol picker ─────────────────────
     def open_table_picker(self, cart: CartWidget):

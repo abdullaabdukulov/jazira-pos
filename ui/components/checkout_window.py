@@ -572,8 +572,17 @@ class CheckoutWindow(QDialog):
             except ValueError:
                 pass
 
+        # KOT dublikatining oldini olish:
+        # - existing_invoice bor bo'lsa (pending listdan to'lov) → KOT save paytida
+        #   allaqachon chiqqan, hozir faqat mijoz cheki
+        # - existing_invoice yo'q bo'lsa (yangi yangi to'lov) → ikkala chek
+        is_pending_pay = bool(self.order_data.get("existing_invoice"))
         try:
-            results = print_receipt(self, self.order_data, final_payments)
+            results = print_receipt(
+                self, self.order_data, final_payments,
+                include_customer=True,
+                include_production=not is_pending_pay,
+            )
             failed = [k for k, v in results.items() if not v]
             if failed:
                 logger.warning("Printerlar chop etilmadi: %s", ", ".join(failed))

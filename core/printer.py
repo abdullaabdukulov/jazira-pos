@@ -181,8 +181,22 @@ def _printer_cfg(printer: dict) -> dict:
 # ──────────────────────────────────────────────────
 #  Public API
 # ──────────────────────────────────────────────────
-def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
-    """Mijoz cheki + barcha production unit cheklari."""
+def print_receipt(
+    parent_widget,
+    order_data: dict,
+    payments_list: list,
+    include_customer: bool = True,
+    include_production: bool = True,
+) -> dict:
+    """Mijoz cheki + production unit cheklari.
+
+    KOT dublikatining oldini olish uchun flaglar:
+    - Saqlash flowi (to'lovsiz): include_customer=False, include_production=True
+      → faqat oshxonaga KOT chiqadi
+    - Pending listdan to'lov (saved order): include_customer=True, include_production=False
+      → faqat mijoz cheki (KOT allaqachon save paytida chiqqan)
+    - Yangi to'lov (saved emas): ikkalasi True (default)
+    """
     results = {}
     cfg = _get_printer_config()
 
@@ -194,13 +208,13 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
         return results
 
     logger.info(
-        "print_receipt: customer='%s' (%s/%dmm), units=%d",
+        "print_receipt: customer='%s' (%s/%dmm), units=%d, include_customer=%s, include_production=%s",
         customer["name"], customer["driver"], customer["width_mm"],
-        len(cfg["production_units"])
+        len(cfg["production_units"]), include_customer, include_production,
     )
 
     # 1. Mijoz cheki
-    if customer["name"]:
+    if include_customer and customer["name"]:
         try:
             data = build_customer_receipt(
                 order_data, payments_list,
@@ -213,7 +227,7 @@ def print_receipt(parent_widget, order_data: dict, payments_list: list) -> dict:
             results["customer"] = False
 
     # 2. Production unit cheklari
-    if not cfg["production_units"]:
+    if not include_production or not cfg["production_units"]:
         return results
 
     items_list = order_data.get("items", [])
