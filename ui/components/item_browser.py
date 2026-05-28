@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QGridLayout, QLabel, QSizePolicy, QFrame,
     QScroller, QScrollerProperties, QDialog,
 )
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QColor, QPainterPath, QFont, QFontMetrics
 from database.models import Item, ItemPrice, db
 from core.api import FrappeAPI
 from core.config import load_config, save_config
@@ -841,8 +841,25 @@ class ItemBrowser(QWidget):
         btn = QPushButton()
         btn.setCheckable(True)
         btn.setChecked(is_all)
-        btn.setFixedHeight(s(74))
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Tugma balandligini o'ralgan nom bo'yicha hisoblaymiz — ikki qatorli
+        # kategoriya nomlari ("Газлив напитки") kesilib qolmasligi uchun. Panel
+        # kengligi s(170); nom uchun mavjud kenglik ~ s(110) (chetlar+padding+scrollbar).
+        _name_font = QFont(btn.font())
+        _name_font.setPixelSize(font(16))
+        _name_font.setBold(True)
+        _name_h = QFontMetrics(_name_font).boundingRect(
+            0, 0, s(110), 10000, int(Qt.TextFlag.TextWordWrap), name
+        ).height()
+        _count_h = 0
+        if count > 0:
+            _count_font = QFont(btn.font())
+            _count_font.setPixelSize(font(11))
+            _count_h = QFontMetrics(_count_font).height() + s(2)  # +inner spacing
+        # css padding (10*2) + kontent + nafas oladigan joy; min s(74) (1 qatorli)
+        _btn_h = s(10) * 2 + _name_h + _count_h + s(8)
+        btn.setFixedHeight(max(s(74), _btn_h))
         btn.setStyleSheet(f"""
             QPushButton {{
                 text-align: left;
@@ -878,6 +895,10 @@ class ItemBrowser(QWidget):
             border: none;
         """)
         name_lbl.setWordWrap(True)
+        # QLabel wordWrap layout ichida faqat 1 qator band qiladi (heightForWidth
+        # avtomatik yoqilmaydi) — o'ralgan matn balandligini eksplicit beramiz,
+        # aks holda 2-qator ("напитки") kesilib qoladi.
+        name_lbl.setMinimumHeight(_name_h)
         inner.addWidget(name_lbl)
 
         if count > 0:

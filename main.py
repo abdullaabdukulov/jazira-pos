@@ -18,11 +18,12 @@ except Exception:
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 from core.api import FrappeAPI
 from core.logger import get_logger
 from ui.login_window import LoginWindow
 from ui.main_window import MainWindow
+from ui.components.dialogs import InfoDialog
 from ui.styles import get_global_style
 
 logger = get_logger(__name__)
@@ -66,11 +67,13 @@ def main():
         windows["main"].showMaximized()
 
     if not shared_api.is_configured():
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Critical)
-        msg.setWindowTitle("Tizim sozlanmagan")
-        msg.setText(".env fayli topilmadi yoki to'liq emas.\n\nAdmin FRAPPE_URL, FRAPPE_USER, FRAPPE_PASSWORD ni sozlashi kerak.")
-        msg.exec()
+        InfoDialog(
+            None,
+            "Tizim sozlanmagan",
+            ".env fayli topilmadi yoki to'liq emas.\n\n"
+            "Admin FRAPPE_URL, FRAPPE_USER, FRAPPE_PASSWORD ni sozlashi kerak.",
+            kind="error",
+        ).exec()
         sys.exit(1)
 
     # Har doim PIN ekrani — kassir har safar PIN kiritishi shart

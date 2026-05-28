@@ -4,13 +4,14 @@ from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QFrame, QScrollArea, QGridLayout, QMessageBox,
+    QFrame, QScrollArea, QGridLayout,
     QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from core.api import FrappeAPI
 from core.config import load_config
 from core.logger import get_logger
+from ui.components.dialogs import InfoDialog
 from ui.scale import s, font
 
 logger = get_logger(__name__)
@@ -513,20 +514,22 @@ class ShiftDetailDialog(QDialog):
         self.z_print_btn.setEnabled(True)
         self.z_print_btn.setText("🖨  Z-Chop etish")
         if not success:
-            QMessageBox.warning(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.")
+            InfoDialog(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.",
+                       kind="error").exec()
             return
         try:
             from core.printer import print_z_report
             ok = print_z_report(report_data)
             if ok:
-                QMessageBox.information(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!")
+                InfoDialog(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!",
+                           kind="success").exec()
             else:
-                QMessageBox.warning(
-                    self, "Printer",
-                    "Printer sozlanmagan yoki ulanmagan.\nPrinter guide ni tekshiring."
-                )
+                InfoDialog(self, "Printer",
+                           "Printer sozlanmagan yoki ulanmagan.\nPrinter guide ni tekshiring.",
+                           kind="warning", icon="🖨️").exec()
         except Exception as e:
-            QMessageBox.critical(self, "Xatolik", f"Chop etishda xatolik:\n{e}")
+            InfoDialog(self, "Xatolik", f"Chop etishda xatolik:\n{e}",
+                       kind="error").exec()
 
 
 class PosShiftsWindow(QWidget):
@@ -713,19 +716,21 @@ class PosShiftsWindow(QWidget):
             pass
 
         if not success:
-            QMessageBox.warning(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.")
+            InfoDialog(self, "Xatolik", "Z-otchyot ma'lumotlarini olishda xatolik.",
+                       kind="error").exec()
             return
 
         try:
             from core.printer import print_z_report
             ok = print_z_report(report_data)
             if ok:
-                QMessageBox.information(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!")
+                InfoDialog(self, "Muvaffaqiyatli", "Z-otchyot chop etildi!",
+                           kind="success").exec()
             else:
-                QMessageBox.warning(
-                    self, "Printer",
-                    "Printer sozlanmagan yoki ulanmagan.\n"
-                    "POS Profile da printerni sozlang."
-                )
+                InfoDialog(self, "Printer",
+                           "Printer sozlanmagan yoki ulanmagan.\n"
+                           "POS Profile da printerni sozlang.",
+                           kind="warning", icon="🖨️").exec()
         except Exception as e:
-            QMessageBox.critical(self, "Xatolik", f"Chop etishda xatolik:\n{e}")
+            InfoDialog(self, "Xatolik", f"Chop etishda xatolik:\n{e}",
+                       kind="error").exec()

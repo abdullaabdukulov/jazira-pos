@@ -241,9 +241,12 @@ class FrappeAPI:
             if response.status_code == 200:
                 return True, response.json().get("message", response.json())
             else:
-                # 500 xatolar uchun to'liq traceback (server tomonni debug qilish uchun)
+                # Frappe xato javoblari uchun to'liq traceback (server debug uchun).
+                # 417 (Mandatory/ValidationError), 403, 500 va h.k. — barchasi
+                # javob body'sida `exc` (to'liq server traceback) olib keladi.
                 text = response.text
-                if response.status_code >= 500 and len(text) > 500:
+                is_frappe_exc = '"exc"' in text or '"exception"' in text
+                if is_frappe_exc:
                     # JSON dan traceback'ni ajratib chiqarish (oson o'qish uchun)
                     try:
                         import json as _json

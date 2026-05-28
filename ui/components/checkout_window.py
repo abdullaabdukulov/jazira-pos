@@ -109,6 +109,11 @@ class CheckoutWorker(QThread):
         if submit_success:
             self.result_ready.emit(True, "To'lov muvaffaqiyatli yakunlandi!")
         else:
+            logger.error(
+                "make_invoice xatosi — invoice=%s, existing=%s, table=%s, payments=%s: %s",
+                invoice_name, bool(self.existing_invoice),
+                self.invoice_data.get("table"), self.payments, submit_response,
+            )
             # Existing invoice uchun oflayn saqlash mantiqsiz — invoice
             # allaqachon serverda. Faqat xatoni qaytaramiz.
             if self.existing_invoice:
