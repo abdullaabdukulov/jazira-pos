@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QFont
 from database.models import Customer, db
 from core.logger import get_logger
 from core.config import load_config
@@ -19,6 +19,45 @@ from ui.components.dialogs import InfoDialog
 from ui.scale import s, font
 
 logger = get_logger(__name__)
+
+
+# ── Elite palette ────────────────────────────────────────
+_GOLD = "#c89968"
+_GOLD_LIGHT = "#e6c693"
+_GOLD_DEEP = "#a07a44"
+_SLATE_900 = "#0f172a"
+_SLATE_800 = "#1e293b"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_400 = "#94a3b8"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+_EMERALD_600 = "#059669"
+_EMERALD_700 = "#047857"
+_RED_700 = "#b91c1c"
+_RED_200 = "#fecaca"
+_RED_50 = "#fef2f2"
+
+
+def _no_frame_label(text: str, color: str, px_size: int, weight: QFont.Weight,
+                    letter_spacing: float = 0) -> QLabel:
+    """QLabel ramkasiz va outline'siz — global QSS ta'sirini bekor qiladi."""
+    lbl = QLabel(text)
+    lbl.setFrameShape(QFrame.Shape.NoFrame)
+    lbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    f = QFont()
+    f.setPixelSize(font(px_size))
+    f.setWeight(weight)
+    if letter_spacing:
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
+    lbl.setFont(f)
+    lbl.setStyleSheet(
+        f"color: {color}; background: transparent;"
+        f" border: none; outline: none; padding: 0; margin: 0;"
+    )
+    return lbl
 
 
 class QtyLabel(QLabel):
@@ -57,32 +96,26 @@ class CartWidget(QWidget):
         main_layout.setContentsMargins(s(8), s(8), s(8), s(8))
         main_layout.setSpacing(s(8))
 
-        # ── Order Details Card ────────────────
-        details_group = QGroupBox("Buyurtma ma'lumotlari")
-        details_group.setStyleSheet(f"""
-            QGroupBox {{
-                font-weight: 700; font-size: {font(12)}px;
-                border: 1.5px solid #e2e8f0;
-                border-radius: {s(12)}px;
-                margin-top: {s(6)}px;
-                background: #f8fafc;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin; left: {s(12)}px;
-                padding: 0 {s(6)}px; color: #64748b;
-                font-size: {font(11)}px; font-weight: 600;
-            }}
-        """)
+        # ── Order Details Section (no frame) ──
+        details_group = QWidget()
+        details_group.setStyleSheet(
+            f"background: {_SLATE_50}; border: 1px solid {_SLATE_200};"
+            f" border-radius: {s(12)}px;"
+        )
         details_layout = QVBoxLayout(details_group)
-        details_layout.setContentsMargins(s(10), s(12), s(10), s(10))
-        details_layout.setSpacing(s(8))
+        details_layout.setContentsMargins(s(16), s(14), s(16), s(14))
+        details_layout.setSpacing(s(10))
 
-        # Order Type
-        type_label = QLabel("BUYURTMA TURI")
-        type_label.setStyleSheet(f"""
-            font-size: {font(10)}px; color: #94a3b8; font-weight: 700;
-            letter-spacing: 1px; margin-bottom: {s(2)}px;
-        """)
+        # Section title — elite caps wordmark
+        section_title = _no_frame_label(
+            "BUYURTMA MA'LUMOTLARI", _SLATE_900, 12, QFont.Weight.Black, 2
+        )
+        details_layout.addWidget(section_title)
+
+        # Sub-section: order type
+        type_label = _no_frame_label(
+            "BUYURTMA TURI", _SLATE_500, 9, QFont.Weight.Black, 2
+        )
         details_layout.addWidget(type_label)
 
         # Barcha buyurtma turi tugmalari (doim yaratiladi, visibility bilan boshqariladi)
@@ -109,12 +142,13 @@ class CartWidget(QWidget):
 
         # Stiker container (Stiker rejimi uchun)
         self._ticket_container = QWidget()
-        self._ticket_container.setStyleSheet("background: transparent;")
+        self._ticket_container.setStyleSheet("background: transparent; border: none;")
         sticker_vbox = QVBoxLayout(self._ticket_container)
         sticker_vbox.setContentsMargins(0, 0, 0, 0)
-        sticker_vbox.setSpacing(s(2))
-        sticker_label = QLabel("STIKER")
-        sticker_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        sticker_vbox.setSpacing(s(4))
+        sticker_label = _no_frame_label(
+            "STIKER", _SLATE_500, 9, QFont.Weight.Black, 2
+        )
         self.ticket_input = QLineEdit()
         self.ticket_input.setMaxLength(6)
         self.ticket_input.setPlaceholderText("—")
@@ -129,12 +163,13 @@ class CartWidget(QWidget):
 
         # Stol container (Stol rejimi uchun) — TZ 4.1.7
         self._table_container = QWidget()
-        self._table_container.setStyleSheet("background: transparent;")
+        self._table_container.setStyleSheet("background: transparent; border: none;")
         table_vbox = QVBoxLayout(self._table_container)
         table_vbox.setContentsMargins(0, 0, 0, 0)
-        table_vbox.setSpacing(s(2))
-        table_label = QLabel("STOL")
-        table_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        table_vbox.setSpacing(s(4))
+        table_label = _no_frame_label(
+            "STOL", _SLATE_500, 9, QFont.Weight.Black, 2
+        )
         self.table_button = QPushButton("Stol tanlash...")
         self.table_button.setFixedHeight(s(55))
         self.table_button.setStyleSheet(self._table_btn_style(False))
@@ -146,12 +181,13 @@ class CartWidget(QWidget):
 
         # Mijoz container
         self._customer_container = QWidget()
-        self._customer_container.setStyleSheet("background: transparent;")
+        self._customer_container.setStyleSheet("background: transparent; border: none;")
         customer_vbox = QVBoxLayout(self._customer_container)
         customer_vbox.setContentsMargins(0, 0, 0, 0)
-        customer_vbox.setSpacing(s(2))
-        customer_label = QLabel("MIJOZ")
-        customer_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        customer_vbox.setSpacing(s(4))
+        customer_label = _no_frame_label(
+            "MIJOZ", _SLATE_500, 9, QFont.Weight.Black, 2
+        )
         self.customer_combo = QComboBox()
         self.customer_combo.setEditable(True)
         self.customer_combo.setFixedHeight(s(55))
@@ -164,12 +200,13 @@ class CartWidget(QWidget):
 
         # Izoh container
         self._comment_container = QWidget()
-        self._comment_container.setStyleSheet("background: transparent;")
+        self._comment_container.setStyleSheet("background: transparent; border: none;")
         comment_vbox = QVBoxLayout(self._comment_container)
         comment_vbox.setContentsMargins(0, 0, 0, 0)
-        comment_vbox.setSpacing(s(2))
-        comment_label = QLabel("IZOH")
-        comment_label.setStyleSheet(f"font-size: {font(10)}px; color: #94a3b8; font-weight: 700; letter-spacing: 1px;")
+        comment_vbox.setSpacing(s(4))
+        comment_label = _no_frame_label(
+            "IZOH", _SLATE_500, 9, QFont.Weight.Black, 2
+        )
         self.comment_input = QLineEdit()
         self.comment_input.setPlaceholderText("Buyurtma izohi...")
         self.comment_input.setFixedHeight(s(50))
@@ -190,47 +227,59 @@ class CartWidget(QWidget):
 
         # ── Cart Table ───────────────────────
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Mahsulot", "Miqdor", "Narx", "Summa"])
+        self.table.setHorizontalHeaderLabels(["MAHSULOT", "MIQDOR", "NARX", "SUMMA"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
+        self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setStyleSheet(f"""
             QTableWidget {{
                 border: none;
                 background: white;
-                alternate-background-color: #f8fafc;
-                font-size: {font(16)}px;
-                font-weight: 700;
-                color: #1e293b;
-                selection-background-color: #dbeafe;
-                selection-color: #1e40af;
+                font-size: {font(14)}px;
+                font-weight: 600;
+                color: {_SLATE_900};
+                outline: none;
+                gridline-color: transparent;
             }}
             QTableWidget::item {{
-                padding: {s(6)}px {s(10)}px;
-                border-bottom: 1px solid #f1f5f9;
-            }}
-            QHeaderView::section {{
-                background: #f1f5f9;
-                color: #64748b;
-                font-weight: 800;
-                font-size: {font(12)}px;
-                letter-spacing: 1.5px;
-                text-transform: uppercase;
-                padding: {s(10)}px {s(10)}px;
+                padding: {s(6)}px {s(14)}px;
                 border: none;
-                border-bottom: 2px solid #e2e8f0;
+                border-right: 1px solid {_SLATE_100};
             }}
+            QTableWidget::item:last {{ border-right: none; }}
+            QTableWidget::item:alternate {{ background: {_SLATE_50}; }}
+            QTableWidget::item:hover {{ background: #fffbeb; }}
+            QTableWidget::item:selected {{ background: #fff7ed; color: {_GOLD_DEEP}; }}
+            QHeaderView {{ background: transparent; border: none; }}
+            QHeaderView::section {{
+                background: white;
+                color: {_SLATE_400};
+                font-weight: 800;
+                font-size: {font(10)}px;
+                letter-spacing: 2px;
+                padding: {s(12)}px {s(14)}px;
+                border: none;
+                border-bottom: 2px solid {_SLATE_200};
+                border-right: 1px solid {_SLATE_100};
+            }}
+            QHeaderView::section:last {{ border-right: none; }}
             QScrollBar:vertical {{
-                width: {s(6)}px; background: transparent;
+                width: {s(6)}px; background: transparent; border: none;
             }}
             QScrollBar::handle:vertical {{
-                background: #cbd5e1; border-radius: {s(3)}px; min-height: {s(30)}px;
+                background: {_SLATE_300}; border-radius: {s(3)}px;
+                min-height: {s(30)}px;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
         """)
         header = self.table.horizontalHeader()
+        header.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
@@ -238,6 +287,14 @@ class CartWidget(QWidget):
         self.table.setColumnWidth(1, s(176))
         self.table.setColumnWidth(2, s(140))
         self.table.setColumnWidth(3, s(150))
+
+        # MIQDOR markazda, NARX va SUMMA o'ngda
+        center_align = Qt.AlignmentFlag.AlignCenter
+        right_align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        self.table.horizontalHeaderItem(1).setTextAlignment(center_align)
+        self.table.horizontalHeaderItem(2).setTextAlignment(right_align)
+        self.table.horizontalHeaderItem(3).setTextAlignment(right_align)
+
         main_layout.addWidget(self.table)
 
         # Touch scroll — sensorli ekranda barmaq bilan surish
@@ -252,41 +309,48 @@ class CartWidget(QWidget):
         totals_card = QFrame()
         totals_card.setStyleSheet(f"""
             QFrame {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #f8fafc, stop:1 #f1f5f9);
-                border: 1.5px solid #e2e8f0;
+                background: {_SLATE_50};
+                border: 1px solid {_SLATE_200};
                 border-radius: {s(12)}px;
             }}
         """)
         totals_layout = QHBoxLayout(totals_card)
-        totals_layout.setContentsMargins(s(14), s(10), s(14), s(10))
+        totals_layout.setContentsMargins(s(18), s(12), s(14), s(12))
 
-        total_title = QLabel("JAMI")
-        total_title.setStyleSheet(f"""
-            font-size: {font(11)}px; color: #94a3b8; font-weight: 800;
-            letter-spacing: 2px; background: transparent;
-        """)
-        self.total_label = QLabel("0 UZS")
-        self.total_label.setStyleSheet(f"""
-            font-size: {font(34)}px; font-weight: 900; color: #0f172a;
-            background: transparent;
-        """)
-        self.total_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        total_title = _no_frame_label(
+            "JAMI", _SLATE_500, 11, QFont.Weight.Black, 2.5
+        )
+        self.total_label = _no_frame_label(
+            "0 UZS", _SLATE_900, 32, QFont.Weight.Black, 0.5
+        )
+        self.total_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
 
         totals_layout.addWidget(total_title)
         totals_layout.addStretch()
         totals_layout.addWidget(self.total_label)
 
-        self.clear_btn = QPushButton("🗑  Tozalash")
-        self.clear_btn.setFixedSize(s(130), s(44))
+        self.clear_btn = QPushButton("Tozalash")
+        self.clear_btn.setFixedSize(s(120), s(40))
+        self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.clear_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #fef2f2; color: #dc2626;
-                font-weight: 700; font-size: {font(12)}px;
-                border-radius: {s(10)}px; border: 1.5px solid #fecaca;
+                background: transparent;
+                color: {_RED_700};
+                font-weight: 700;
+                font-size: {font(12)}px;
+                letter-spacing: 0.5px;
+                border-radius: {s(8)}px;
+                border: 1px solid transparent;
+                outline: none;
             }}
-            QPushButton:hover {{ background: #fee2e2; border-color: #fca5a5; }}
-            QPushButton:pressed {{ background: #fecaca; }}
+            QPushButton:hover {{
+                background: {_RED_50};
+                border: 1px solid {_RED_200};
+            }}
+            QPushButton:pressed {{ background: #fee2e2; }}
         """)
         self.clear_btn.clicked.connect(self.clear_cart)
         totals_layout.addWidget(self.clear_btn)
@@ -297,40 +361,50 @@ class CartWidget(QWidget):
         actions_row.setSpacing(s(8))
 
         # Saqlash tugmasi — to'lovsiz buyurtma (TZ 4.2.1)
-        self.save_btn = QPushButton("💾  SAQLASH")
+        self.save_btn = QPushButton("SAQLASH")
         self.save_btn.setFixedHeight(s(72))
+        self.save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.save_btn.setStyleSheet(f"""
             QPushButton {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #6366f1, stop:1 #4f46e5);
-                color: white; font-size: {font(18)}px;
-                font-weight: 800; border-radius: {s(14)}px;
-                letter-spacing: 1px;
+                background: {_SLATE_900};
+                color: white;
+                font-size: {font(16)}px;
+                font-weight: 800;
+                letter-spacing: 2px;
+                border-radius: {s(14)}px;
+                border: 1px solid {_SLATE_900};
+                outline: none;
             }}
             QPushButton:hover {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #4f46e5, stop:1 #4338ca);
+                background: {_SLATE_800};
+                border-color: {_SLATE_800};
             }}
-            QPushButton:pressed {{ background: #3730a3; }}
+            QPushButton:pressed {{ background: #0b1220; }}
         """)
         self.save_btn.clicked.connect(self.handle_save)
         actions_row.addWidget(self.save_btn, 2)
 
-        self.checkout_btn = QPushButton("TO'LOV QILISH  (F12)")
+        self.checkout_btn = QPushButton("TO'LOV QILISH    F12")
         self.checkout_btn.setFixedHeight(s(72))
+        self.checkout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.checkout_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.checkout_btn.setStyleSheet(f"""
             QPushButton {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #22c55e, stop:1 #16a34a);
-                color: white; font-size: {font(20)}px;
-                font-weight: 800; border-radius: {s(14)}px;
-                letter-spacing: 1px;
+                background: {_EMERALD_600};
+                color: white;
+                font-size: {font(18)}px;
+                font-weight: 800;
+                letter-spacing: 1.5px;
+                border-radius: {s(14)}px;
+                border: 1px solid {_EMERALD_600};
+                outline: none;
             }}
             QPushButton:hover {{
-                background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
-                    stop:0 #16a34a, stop:1 #15803d);
+                background: {_EMERALD_700};
+                border-color: {_EMERALD_700};
             }}
-            QPushButton:pressed {{ background: #15803d; }}
+            QPushButton:pressed {{ background: #065f46; }}
         """)
         self.checkout_btn.clicked.connect(self.handle_checkout)
         actions_row.addWidget(self.checkout_btn, 3)
@@ -350,33 +424,55 @@ class CartWidget(QWidget):
         self.set_order_type(ORDER_TYPES[0])
 
     # ─────────────────────────────────────────
-    #  INLINE NUMPAD
+    #  INLINE NUMPAD — elite
     # ─────────────────────────────────────────
     def _build_numpad_panel(self):
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame { background: #f1f5f9; border-top: 2px solid #e2e8f0; }
-        """)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {_SLATE_50};"
+            f" border-top: 1px solid {_SLATE_200}; }}"
+        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(s(10), s(8), s(10), s(10))
-        layout.setSpacing(s(6))
+        layout.setContentsMargins(s(14), s(12), s(14), s(14))
+        layout.setSpacing(s(8))
 
         top = QHBoxLayout()
+        top.setSpacing(s(10))
         self.numpad_display = QLabel("—")
-        self.numpad_display.setFixedHeight(s(42))
+        self.numpad_display.setFixedHeight(s(46))
         self.numpad_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.numpad_display.setStyleSheet(f"""
-            font-size: {font(22)}px; font-weight: 700; color: #1e293b;
-            background: white; border: 1.5px solid #3b82f6;
-            border-radius: {s(8)}px; padding: {s(4)}px {s(12)}px;
-        """)
-        _cb = s(42)
+        self.numpad_display.setFrameShape(QFrame.Shape.NoFrame)
+        self.numpad_display.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        np_font = QFont()
+        np_font.setPixelSize(font(22))
+        np_font.setWeight(QFont.Weight.Black)
+        np_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        self.numpad_display.setFont(np_font)
+        self.numpad_display.setStyleSheet(
+            f"color: {_SLATE_900}; background: white;"
+            f" border: 1px solid {_SLATE_200}; border-radius: {s(10)}px;"
+            f" padding: 0 {s(14)}px; outline: none;"
+        )
         np_close = QPushButton("✕")
-        np_close.setFixedSize(_cb, _cb)
+        np_close.setFixedSize(s(46), s(46))
+        np_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        np_close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         np_close.setStyleSheet(f"""
-            QPushButton {{ background:#ef4444; color:white; font-weight:bold;
-                font-size:{font(16)}px; border-radius:{s(8)}px; border:none; }}
-            QPushButton:hover {{ background:#dc2626; }}
+            QPushButton {{
+                background: transparent;
+                color: {_SLATE_400};
+                font-weight: 700;
+                font-size: {font(15)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: white;
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         np_close.clicked.connect(self._close_panels)
         top.addWidget(self.numpad_display, stretch=1)
@@ -386,7 +482,7 @@ class CartWidget(QWidget):
         keys = [['7','8','9'], ['4','5','6'], ['1','2','3'], ['CLR','0','⌫']]
         for row_keys in keys:
             row = QHBoxLayout()
-            row.setSpacing(s(6))
+            row.setSpacing(s(8))
             for k in row_keys:
                 row.addWidget(self._make_numpad_key(k))
             layout.addLayout(row)
@@ -396,16 +492,41 @@ class CartWidget(QWidget):
     def _make_numpad_key(self, key):
         label = 'TOZALASH' if key == 'CLR' else key
         btn = QPushButton(label)
-        btn.setFixedHeight(s(52))
+        btn.setFixedHeight(s(56))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         if key == '⌫':
-            style = f"background:#fee2e2; color:#ef4444; font-size:{font(20)}px; font-weight:bold;"
+            base = f"""
+                background: white;
+                color: {_RED_700};
+                font-size: {font(20)}px;
+                font-weight: 700;
+                border: 1px solid {_RED_200};
+            """
+            hover = f"background: {_RED_50}; border: 1px solid #fca5a5;"
         elif key == 'CLR':
-            style = f"background:#fff7ed; color:#ea580c; font-size:{font(11)}px; font-weight:bold;"
+            base = f"""
+                background: white;
+                color: {_SLATE_500};
+                font-size: {font(10)}px;
+                font-weight: 800;
+                letter-spacing: 1.5px;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300}; color: {_SLATE_900};"
         else:
-            style = f"background:white; color:#1e293b; font-size:{font(20)}px; font-weight:700;"
+            base = f"""
+                background: white;
+                color: {_SLATE_900};
+                font-size: {font(22)}px;
+                font-weight: 700;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300};"
         btn.setStyleSheet(f"""
-            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:{s(8)}px; }}
-            QPushButton:pressed {{ background:#dbeafe; }}
+            QPushButton {{ {base} border-radius: {s(10)}px; outline: none; }}
+            QPushButton:hover {{ {hover} }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         btn.clicked.connect(lambda _, k=key: self._on_numpad_key(k))
         return btn
@@ -438,32 +559,53 @@ class CartWidget(QWidget):
             self.numpad_display.setText(new or "—")
 
     # ─────────────────────────────────────────
-    #  INLINE KEYBOARD
+    #  INLINE KEYBOARD — elite
     # ─────────────────────────────────────────
     def _build_keyboard_panel(self):
         panel = QFrame()
-        panel.setStyleSheet("""
-            QFrame { background: #f1f5f9; border-top: 2px solid #e2e8f0; }
-        """)
+        panel.setStyleSheet(
+            f"QFrame {{ background: {_SLATE_50};"
+            f" border-top: 1px solid {_SLATE_200}; }}"
+        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(s(10), s(8), s(10), s(10))
-        layout.setSpacing(s(5))
+        layout.setContentsMargins(s(14), s(12), s(14), s(14))
+        layout.setSpacing(s(6))
 
         top = QHBoxLayout()
+        top.setSpacing(s(10))
         self.kb_display = QLabel("Izoh...")
-        self.kb_display.setFixedHeight(s(38))
-        self.kb_display.setStyleSheet(f"""
-            font-size: {font(15)}px; font-weight: 600; color: #334155;
-            background: white; border: 1.5px solid #3b82f6;
-            border-radius: {s(8)}px; padding: {s(4)}px {s(12)}px;
-        """)
-        _cb = s(38)
+        self.kb_display.setFixedHeight(s(42))
+        self.kb_display.setFrameShape(QFrame.Shape.NoFrame)
+        self.kb_display.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        kb_font = QFont()
+        kb_font.setPixelSize(font(14))
+        kb_font.setWeight(QFont.Weight.DemiBold)
+        self.kb_display.setFont(kb_font)
+        self.kb_display.setStyleSheet(
+            f"color: {_SLATE_700}; background: white;"
+            f" border: 1px solid {_SLATE_200}; border-radius: {s(10)}px;"
+            f" padding: 0 {s(14)}px; outline: none;"
+        )
         kb_close = QPushButton("✕")
-        kb_close.setFixedSize(_cb, _cb)
+        kb_close.setFixedSize(s(42), s(42))
+        kb_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        kb_close.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         kb_close.setStyleSheet(f"""
-            QPushButton {{ background:#ef4444; color:white; font-weight:bold;
-                font-size:{font(14)}px; border-radius:{s(8)}px; border:none; }}
-            QPushButton:hover {{ background:#dc2626; }}
+            QPushButton {{
+                background: transparent;
+                color: {_SLATE_400};
+                font-weight: 700;
+                font-size: {font(14)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: white;
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         kb_close.clicked.connect(self._close_panels)
         top.addWidget(self.kb_display, stretch=1)
@@ -478,7 +620,7 @@ class CartWidget(QWidget):
         ]
         for row_keys in rows:
             row = QHBoxLayout()
-            row.setSpacing(s(4))
+            row.setSpacing(s(5))
             for k in row_keys:
                 row.addWidget(self._make_kb_key(k))
             layout.addLayout(row)
@@ -488,21 +630,62 @@ class CartWidget(QWidget):
     def _make_kb_key(self, key):
         label = 'PROBEL' if key == 'SPACE' else ('TOZALASH' if key == 'CLR' else key)
         btn = QPushButton(label)
-        btn.setFixedHeight(s(40))
+        btn.setFixedHeight(s(44))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         if key == '⌫':
-            style = f"background:#fee2e2; color:#ef4444; font-size:{font(16)}px; font-weight:bold;"
+            base = f"""
+                background: white;
+                color: {_RED_700};
+                font-size: {font(16)}px;
+                font-weight: 700;
+                border: 1px solid {_RED_200};
+            """
+            hover = f"background: {_RED_50}; border: 1px solid #fca5a5;"
         elif key == 'CLR':
-            style = f"background:#fff7ed; color:#ea580c; font-size:{font(10)}px; font-weight:bold;"
+            base = f"""
+                background: white;
+                color: {_SLATE_500};
+                font-size: {font(9)}px;
+                font-weight: 800;
+                letter-spacing: 1.5px;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300}; color: {_SLATE_900};"
         elif key == 'SPACE':
-            style = f"background:#eff6ff; color:#3b82f6; font-size:{font(14)}px; font-weight:bold;"
-            btn.setMinimumWidth(s(100))
+            base = f"""
+                background: white;
+                color: {_SLATE_700};
+                font-size: {font(10)}px;
+                font-weight: 800;
+                letter-spacing: 2px;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300}; color: {_SLATE_900};"
+            btn.setMinimumWidth(s(140))
         elif key.isdigit():
-            style = f"background:#e0e7ff; color:#3730a3; font-size:{font(14)}px; font-weight:bold;"
+            base = f"""
+                background: white;
+                color: {_SLATE_900};
+                font-size: {font(15)}px;
+                font-weight: 700;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300};"
         else:
-            style = f"background:white; color:#1e293b; font-size:{font(13)}px; font-weight:600;"
+            base = f"""
+                background: white;
+                color: {_SLATE_900};
+                font-size: {font(13)}px;
+                font-weight: 600;
+                border: 1px solid {_SLATE_200};
+            """
+            hover = f"background: {_SLATE_50}; border: 1px solid {_SLATE_300};"
         btn.setStyleSheet(f"""
-            QPushButton {{ {style} border:1px solid #e2e8f0; border-radius:{s(6)}px; }}
-            QPushButton:pressed {{ background:#dbeafe; }}
+            QPushButton {{ {base} border-radius: {s(8)}px; outline: none; }}
+            QPushButton:hover {{ {hover} }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         btn.clicked.connect(lambda _, k=key: self._on_kb_key(k))
         return btn
@@ -566,18 +749,28 @@ class CartWidget(QWidget):
         if is_active:
             return f"""
                 QPushButton {{
-                    background: #3b82f6; color: white;
-                    border: none; border-radius: {_r}px;
-                    font-weight: 800; font-size: {_fs}px;
+                    background: {_SLATE_900};
+                    color: white;
+                    border: 1px solid {_SLATE_900};
+                    border-radius: {_r}px;
+                    font-weight: 700;
+                    font-size: {_fs}px;
+                    letter-spacing: 0.3px;
                 }}
+                QPushButton:hover {{ background: {_SLATE_800}; border-color: {_SLATE_800}; }}
             """
         return f"""
             QPushButton {{
-                background: white; color: #475569;
-                border: 1.5px solid #e2e8f0;
-                border-radius: {_r}px; font-weight: 700; font-size: {_fs}px;
+                background: white; color: {_SLATE_700};
+                border: 1px solid {_SLATE_200};
+                border-radius: {_r}px; font-weight: 600; font-size: {_fs}px;
+                letter-spacing: 0.3px;
             }}
-            QPushButton:hover {{ background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }}
+            QPushButton:hover {{
+                background: {_SLATE_50}; color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """
 
     @staticmethod
@@ -587,22 +780,23 @@ class CartWidget(QWidget):
                 QPushButton {{
                     padding: {s(10)}px {s(14)}px; font-size: {font(15)}px;
                     font-weight: 700; border-radius: {s(10)}px;
-                    background: #eff6ff; color: #1e40af;
-                    border: 2px solid #3b82f6;
+                    background: #fff7ed; color: {_GOLD_DEEP};
+                    border: 1px solid {_GOLD};
                     text-align: left;
                 }}
-                QPushButton:hover {{ background: #dbeafe; }}
+                QPushButton:hover {{ background: #ffedd5; border-color: {_GOLD_DEEP}; }}
             """
         return f"""
             QPushButton {{
                 padding: {s(10)}px {s(14)}px; font-size: {font(15)}px;
                 font-weight: 600; border-radius: {s(10)}px;
-                background: white; color: #64748b;
-                border: 1.5px solid #e2e8f0;
+                background: white; color: {_SLATE_500};
+                border: 1px solid {_SLATE_200};
                 text-align: left;
             }}
             QPushButton:hover {{
-                background: #eff6ff; color: #2563eb; border-color: #bfdbfe;
+                background: {_SLATE_50}; color: {_SLATE_900};
+                border-color: {_SLATE_300};
             }}
         """
 
@@ -611,15 +805,16 @@ class CartWidget(QWidget):
         return f"""
             QLineEdit, QComboBox {{
                 padding: {s(10)}px {s(14)}px;
-                font-size: {font(17)}px;
-                font-weight: 700;
-                border: 1.5px solid #e2e8f0;
+                font-size: {font(15)}px;
+                font-weight: 600;
+                border: 1px solid {_SLATE_200};
                 border-radius: {s(10)}px;
                 background: white;
-                color: #1e293b;
+                color: {_SLATE_900};
             }}
             QLineEdit:focus, QComboBox:focus {{
-                border-color: #93c5fd;
+                border: 1px solid {_GOLD};
+                background: white;
             }}
             QComboBox::drop-down {{ border: none; }}
             QComboBox::down-arrow {{ width: {s(14)}px; height: {s(14)}px; }}
@@ -765,14 +960,14 @@ class CartWidget(QWidget):
         total_amount = 0.0
         currency = "UZS"
 
-        _btn_sz = s(46)
-        _qty_w = s(52)
-        _qty_h = s(46)
+        _btn_sz = s(38)
+        _qty_w = s(56)
+        _qty_h = s(38)
         _r = s(8)
 
         for row_idx, (code, data) in enumerate(self.items.items()):
             self.table.insertRow(row_idx)
-            self.table.setRowHeight(row_idx, s(68))
+            self.table.setRowHeight(row_idx, s(76))
 
             name_item = QTableWidgetItem(data["name"])
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
@@ -785,50 +980,66 @@ class CartWidget(QWidget):
             qty_widget = QWidget()
             qty_widget.setStyleSheet("background: transparent;")
             qty_layout = QHBoxLayout(qty_widget)
-            qty_layout.setContentsMargins(s(4), s(6), s(4), s(6))
+            qty_layout.setContentsMargins(s(8), s(4), s(8), s(4))
             qty_layout.setSpacing(0)
             qty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             btn_minus = QPushButton("−")
             btn_minus.setFixedSize(_btn_sz, _btn_sz)
+            btn_minus.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_minus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn_minus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(22)}px; font-weight: bold; color: #ef4444;
-                    background: #fef2f2;
-                    border: 1px solid #fecaca;
+                    font-size: {font(20)}px; font-weight: 700;
+                    color: {_RED_700}; background: white;
+                    border: 1px solid {_RED_200};
                     border-top-left-radius: {_r}px;
                     border-bottom-left-radius: {_r}px;
                     border-top-right-radius: 0px;
                     border-bottom-right-radius: 0px;
+                    outline: none;
                 }}
-                QPushButton:pressed {{ background: #fecaca; }}
+                QPushButton:hover {{ background: {_RED_50}; border-color: #fca5a5; }}
+                QPushButton:pressed {{ background: #fee2e2; }}
             """)
             btn_minus.clicked.connect(lambda checked, c=code: self.update_qty(c, -1))
 
             qty_label = QtyLabel(str(int(data["qty"])))
             qty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qty_label.setFixedSize(_qty_w, _qty_h)
-            qty_label.setStyleSheet(f"""
-                font-size: {font(20)}px; font-weight: 900; color: #0f172a;
-                background: white;
-                border-top: 1px solid #e2e8f0;
-                border-bottom: 1px solid #e2e8f0;
-            """)
-            qty_label.clicked.connect(lambda c=code, q=str(int(data["qty"])): self._open_qty_numpad(c, q))
+            qty_label.setFrameShape(QFrame.Shape.NoFrame)
+            qty_label.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            ql_font = QFont()
+            ql_font.setPixelSize(font(18))
+            ql_font.setWeight(QFont.Weight.Black)
+            qty_label.setFont(ql_font)
+            qty_label.setStyleSheet(
+                f"color: {_SLATE_900}; background: white;"
+                f" border-top: 1px solid {_SLATE_200};"
+                f" border-bottom: 1px solid {_SLATE_200};"
+                f" outline: none; padding: 0; margin: 0;"
+            )
+            qty_label.clicked.connect(
+                lambda c=code, q=str(int(data["qty"])): self._open_qty_numpad(c, q)
+            )
 
             btn_plus = QPushButton("+")
             btn_plus.setFixedSize(_btn_sz, _btn_sz)
+            btn_plus.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_plus.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn_plus.setStyleSheet(f"""
                 QPushButton {{
-                    font-size: {font(22)}px; font-weight: bold; color: #22c55e;
-                    background: #f0fdf4;
-                    border: 1px solid #bbf7d0;
+                    font-size: {font(20)}px; font-weight: 700;
+                    color: {_EMERALD_700}; background: white;
+                    border: 1px solid #a7f3d0;
                     border-top-right-radius: {_r}px;
                     border-bottom-right-radius: {_r}px;
                     border-top-left-radius: 0px;
                     border-bottom-left-radius: 0px;
+                    outline: none;
                 }}
-                QPushButton:pressed {{ background: #dcfce7; }}
+                QPushButton:hover {{ background: #ecfdf5; border-color: #6ee7b7; }}
+                QPushButton:pressed {{ background: #d1fae5; }}
             """)
             btn_plus.clicked.connect(lambda checked, c=code: self.update_qty(c, 1))
 

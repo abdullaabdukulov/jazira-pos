@@ -28,6 +28,7 @@ class SyncWorker(QThread):
             items_ok = self._sync_items()
             customers_ok = self._sync_customers()
             self._sync_tables_and_rooms()
+            self._sync_menu_course_order()
 
             warnings = []
             config = load_config()
@@ -160,7 +161,11 @@ class SyncWorker(QThread):
             "enabled_order_types": enabled_order_types,
             "order_number_type": pos_data.get("order_number_type", "Stiker"),
             "item_columns":    pos_data.get("item_columns", 0),
-            "company_logo":    pos_data.get("company_logo", ""),
+            "brand_name":      pos_data.get("brand_name", "") or pos_data.get("company", ""),
+            # Tezkor sotuv slotlari — server'dan kelsa, lokalni o'zgartirish
+            # Maks 4 (cart panel kichik bo'lmasligi uchun)
+            "quick_slots_count": max(3, min(int(pos_data.get("quick_slots_count") or 3), 4)),
+            "quick_items":     pos_data.get("quick_items") or load_config().get("quick_items", []),
             "receipt_footer":  pos_data.get("receipt_footer", ""),
             "cashiers": cashiers_to_save,
         })
@@ -359,4 +364,21 @@ class SyncWorker(QThread):
         else:
             logger.warning("Stollar olinmadi: %s", tables)
 
+    def _sync_menu_course_order(self):
+        """URY Menu Course tartibini olib config'ga saqlash.
+
+        Saqlash sxemasi:
+            config["menu_course_order"] = [
+                {"name": "Лаваш", "priority": 1, "indicate_in_kds": 0},
+                ...
+            ]
+        Tartib server-tarafda custom_serving_priority bo'yicha keladi.
+        """
+        self.progress_update.emit("Kategoriya tartibi yuklanmoqda...")
+        ok, data = self.api.call_method("ury.ury_pos.api.getMenuCourses")
+        if ok and isinstance(data, list):
+            save_config({"menu_course_order": data})
+            logger.info("%d ta menu course sinxronlandi", len(data))
+        else:
+            logger.warning("Menu course tartibi olinmadi: %s", data)
 

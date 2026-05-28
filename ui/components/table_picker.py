@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QStackedWidget,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QTimer
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont
 
 from core.api import FrappeAPI
 from core.logger import get_logger
@@ -24,18 +24,60 @@ from ui.scale import s, font
 logger = get_logger(__name__)
 
 
-# ── Stol qutisi rangları ───────────────────────────────
-_FREE_BG = "#f0fdf4"        # och yashil
-_FREE_BORDER = "#86efac"    # yashil
-_FREE_TEXT = "#15803d"      # to'q yashil
+# ── Elite palette ───────────────────────────────────────
+_GOLD = "#c89968"
+_GOLD_LIGHT = "#e6c693"
+_GOLD_DEEP = "#a07a44"
+_SLATE_900 = "#0f172a"
+_SLATE_800 = "#1e293b"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_400 = "#94a3b8"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+_EMERALD_600 = "#059669"
+_EMERALD_700 = "#047857"
+_EMERALD_200 = "#a7f3d0"
+_EMERALD_50 = "#ecfdf5"
+_RED_700 = "#b91c1c"
+_RED_500 = "#ef4444"
+_RED_200 = "#fecaca"
+_RED_50 = "#fef2f2"
 
-_OCC_BG = "#fef2f2"         # och qizil
-_OCC_BORDER = "#fca5a5"     # qizil
-_OCC_TEXT = "#b91c1c"       # to'q qizil
 
-_SELECTED_BG = "#dbeafe"    # och ko'k
-_SELECTED_BORDER = "#3b82f6"
-_SELECTED_TEXT = "#1e40af"
+# ── Stol qutisi rangları (elite tones) ─────────────────
+_FREE_BG = "white"
+_FREE_BORDER = _EMERALD_200
+_FREE_TEXT = _EMERALD_700
+
+_OCC_BG = _RED_50
+_OCC_BORDER = _RED_200
+_OCC_TEXT = _RED_700
+
+_SELECTED_BG = "#fff7ed"
+_SELECTED_BORDER = _GOLD
+_SELECTED_TEXT = _GOLD_DEEP
+
+
+def _no_frame_label(text: str, color: str, px_size: int, weight: QFont.Weight,
+                    letter_spacing: float = 0) -> QLabel:
+    """QLabel ramkasiz va outline'siz."""
+    lbl = QLabel(text)
+    lbl.setFrameShape(QFrame.Shape.NoFrame)
+    lbl.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    f = QFont()
+    f.setPixelSize(font(px_size))
+    f.setWeight(weight)
+    if letter_spacing:
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, letter_spacing)
+    lbl.setFont(f)
+    lbl.setStyleSheet(
+        f"color: {color}; background: transparent;"
+        f" border: none; outline: none; padding: 0; margin: 0;"
+    )
+    return lbl
 
 
 class RefreshTablesWorker(QThread):
@@ -104,6 +146,147 @@ class FreeTableWorker(QThread):
                 db.close()
 
 
+class _RoomCard(QFrame):
+    """Xona kartasi — elite kompakt dizayn.
+
+    Layout:
+      ┌────────────────────────────────────────────┐
+      │ │ DEFAULT SMART              2  BO'SH    →│
+      │ │ 2 stol  ·  0 band                       │
+      └────────────────────────────────────────────┘
+       ↑ 4px aksent chizig'i (gold yashil = bo'sh bor, red = to'liq band)
+
+    Asosiy diqqat — kassirga "bo'sh stollar" ko'rsatkichi (eng muhim).
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, room_name: str, total: int, free: int, busy: int,
+                 parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(s(110))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        # Holatga qarab aksent rang
+        all_busy = (free == 0 and total > 0)
+        if all_busy:
+            accent = _RED_700
+            accent_border = _RED_200
+            hover_bg = _RED_50
+            accent_bar = "#ef4444"
+        else:
+            accent = _EMERALD_700
+            accent_border = _EMERALD_200
+            hover_bg = _EMERALD_50
+            accent_bar = _GOLD
+
+        self._accent = accent
+        self._accent_border = accent_border
+        self._hover_bg = hover_bg
+        self._accent_bar = accent_bar
+        self._apply_idle()
+
+        # Asosiy layout — horizontal split
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(20), s(14), s(20), s(14))
+        layout.setSpacing(s(16))
+
+        # Chap blok: xona nomi + qisqa stat
+        left = QVBoxLayout()
+        left.setSpacing(s(4))
+        left.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        title = _no_frame_label(
+            room_name.upper(), _SLATE_900, 16, QFont.Weight.Black, 2.5
+        )
+        left.addWidget(title)
+
+        # Inline stat — "N stol · M band"
+        substat = _no_frame_label(
+            f"{total} stol  ·  {busy} band",
+            _SLATE_500, 11, QFont.Weight.DemiBold, 0.5,
+        )
+        left.addWidget(substat)
+
+        layout.addLayout(left, stretch=1)
+
+        # O'ng blok: katta BO'SH ko'rsatkich + arrow
+        right = QHBoxLayout()
+        right.setSpacing(s(14))
+        right.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # Katta BO'SH counter
+        free_block = QVBoxLayout()
+        free_block.setSpacing(s(0))
+        free_block.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        free_num = _no_frame_label(
+            str(free), accent, 32, QFont.Weight.Black, 0
+        )
+        free_num.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        free_block.addWidget(free_num)
+        free_lbl = _no_frame_label(
+            "BO'SH" if not all_busy else "TO'LIQ BAND",
+            accent, 9, QFont.Weight.Black, 2,
+        )
+        free_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        free_block.addWidget(free_lbl)
+        right.addLayout(free_block)
+
+        # Chevron arrow — clickable signal
+        arrow = QLabel("›")
+        arrow.setFrameShape(QFrame.Shape.NoFrame)
+        arrow.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        arf = QFont()
+        arf.setPixelSize(font(28))
+        arf.setWeight(QFont.Weight.Light)
+        arrow.setFont(arf)
+        arrow.setStyleSheet(
+            f"color: {_SLATE_300}; background: transparent;"
+            f" border: none; outline: none;"
+        )
+        arrow.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        right.addWidget(arrow)
+
+        layout.addLayout(right)
+
+    def _apply_idle(self):
+        self.setStyleSheet(f"""
+            _RoomCard {{
+                background: white;
+                border: 1px solid {_SLATE_200};
+                border-left: 4px solid {self._accent_bar};
+                border-radius: {s(12)}px;
+            }}
+        """)
+
+    def _apply_hover(self):
+        self.setStyleSheet(f"""
+            _RoomCard {{
+                background: {self._hover_bg};
+                border: 1px solid {self._accent_border};
+                border-left: 4px solid {self._accent_bar};
+                border-radius: {s(12)}px;
+            }}
+        """)
+
+    def enterEvent(self, event):
+        self._apply_hover()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._apply_idle()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class TableButton(QPushButton):
     """Stol qutisi — tanlash uchun, band/bo'sh holat farqli."""
 
@@ -118,6 +301,8 @@ class TableButton(QPushButton):
         # Tugma bo'sh — content QVBoxLayout orqali joylashtiriladi
         self.setText("")
         self.setCheckable(True)
+        self.setCursor(_Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(_Qt.FocusPolicy.NoFocus)
         self.setMinimumSize(s(120), s(110))
 
         # Eski layoutni tozalash (rebuild paytida)
@@ -131,37 +316,41 @@ class TableButton(QPushButton):
             QWidget().setLayout(old_layout)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(s(10), s(12), s(10), s(12))
-        layout.setSpacing(s(4))
+        layout.setContentsMargins(s(10), s(14), s(10), s(14))
+        layout.setSpacing(s(6))
         layout.setAlignment(_Qt.AlignmentFlag.AlignCenter)
 
-        # Asosiy nom — katta
-        self._name_lbl = QLabel(self.table_doc.name)
-        self._name_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
-        self._name_lbl.setStyleSheet(
-            f"font-size: {font(18)}px; font-weight: 900; background: transparent;"
+        # Asosiy nom — katta (no_frame label, letter-spacing bilan)
+        self._name_lbl = _no_frame_label(
+            self.table_doc.name, _SLATE_900, 20, QFont.Weight.Black, 1
         )
+        self._name_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._name_lbl)
 
-        # O'rin soni — kichikroq
+        # O'rin soni — emoji yo'q, sof tipografiya
         seats = self.table_doc.no_of_seats or 0
         if seats:
-            self._seats_lbl = QLabel(f"👤 {seats} o'rin")
-            self._seats_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
-            self._seats_lbl.setStyleSheet(
-                f"font-size: {font(11)}px; font-weight: 600;"
-                f"background: transparent; letter-spacing: 0.3px;"
+            self._seats_lbl = _no_frame_label(
+                f"{seats} o'rin", _SLATE_500, 11, QFont.Weight.DemiBold, 0.3
             )
+            self._seats_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(self._seats_lbl)
 
-        # Holat badge — band bo'lsa
+        # Holat badge — band bo'lsa, refined pill
         if self.table_doc.occupied:
             self._status_lbl = QLabel("BAND")
+            self._status_lbl.setFrameShape(QFrame.Shape.NoFrame)
+            self._status_lbl.setFocusPolicy(_Qt.FocusPolicy.NoFocus)
             self._status_lbl.setAlignment(_Qt.AlignmentFlag.AlignCenter)
+            badge_font = QFont()
+            badge_font.setPixelSize(font(9))
+            badge_font.setWeight(QFont.Weight.Black)
+            badge_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+            self._status_lbl.setFont(badge_font)
             self._status_lbl.setStyleSheet(
-                f"font-size: {font(9)}px; font-weight: 800; color: white;"
-                f"background: #dc2626; border-radius: {s(4)}px;"
-                f"padding: {s(2)}px {s(8)}px; letter-spacing: 1px;"
+                f"color: white; background: {_RED_500};"
+                f" border-radius: {s(4)}px; border: none; outline: none;"
+                f" padding: {s(2)}px {s(10)}px;"
             )
             layout.addWidget(self._status_lbl, alignment=_Qt.AlignmentFlag.AlignCenter)
 
@@ -179,17 +368,17 @@ class TableButton(QPushButton):
             TableButton {{
                 background: {bg};
                 color: {color};
-                border: 2px solid {border};
-                border-radius: {s(14)}px;
+                border: 1.5px solid {border};
+                border-radius: {s(12)}px;
+                outline: none;
             }}
             TableButton:hover {{
-                border: 3px solid {border};
-                background: white;
+                border: 1.5px solid {color};
+                background: {_SLATE_50 if not self._selected else _SELECTED_BG};
             }}
             TableButton:pressed {{
                 background: {border};
             }}
-            QLabel {{ color: {color}; }}
         """)
 
     def set_selected(self, sel: bool):
@@ -232,63 +421,117 @@ class TablePickerDialog(QDialog):
         self.setStyleSheet("background: white;")
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(s(18), s(14), s(18), s(14))
-        root.setSpacing(s(10))
+        root.setContentsMargins(s(28), s(20), s(28), s(20))
+        root.setSpacing(s(14))
 
-        # ── Header (back tugma stollar view'da, title view'ga qarab o'zgaradi) ──
+        # ── Header ────────────────────────────────
         hdr = QHBoxLayout()
+        hdr.setSpacing(s(12))
+
         self._back_btn = QPushButton("← Xonalar")
-        self._back_btn.setFixedHeight(s(40))
+        self._back_btn.setFixedHeight(s(36))
+        self._back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._back_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._back_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #f1f5f9; color: #1d4ed8;
-                font-size: {font(13)}px; font-weight: 700;
-                padding: 0 {s(14)}px; border-radius: {s(8)}px; border: none;
+                background: white;
+                color: {_SLATE_700};
+                font-size: {font(12)}px;
+                font-weight: 600;
+                padding: 0 {s(14)}px;
+                border-radius: {s(8)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
             }}
-            QPushButton:hover {{ background: #e2e8f0; }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         self._back_btn.clicked.connect(self._show_rooms_view)
         self._back_btn.setVisible(False)
         hdr.addWidget(self._back_btn)
 
-        self._title_label = QLabel("Xonani tanlang")
-        self._title_label.setStyleSheet(f"font-size: {font(20)}px; font-weight: 800; color: #0f172a;")
-        hdr.addWidget(self._title_label)
+        # Title block (caps + subtitle)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(s(2))
+        self._title_label = _no_frame_label(
+            "XONANI TANLANG", _SLATE_900, 14, QFont.Weight.Black, 2
+        )
+        title_block.addWidget(self._title_label)
+        self._subtitle_label = _no_frame_label(
+            "Stol band yoki bo'sh holatini ko'ring",
+            _SLATE_500, 11, QFont.Weight.Medium, 0,
+        )
+        title_block.addWidget(self._subtitle_label)
+        hdr.addLayout(title_block)
+
         hdr.addStretch()
 
-        refresh_btn = QPushButton("⟳")
-        refresh_btn.setFixedSize(s(40), s(40))
+        refresh_btn = QPushButton("Yangilash")
+        refresh_btn.setFixedHeight(s(36))
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         refresh_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #f1f5f9; color: #475569;
-                font-size: {font(16)}px; font-weight: 700;
-                border-radius: {s(8)}px; border: none;
+                background: white;
+                color: {_SLATE_700};
+                font-size: {font(12)}px;
+                font-weight: 600;
+                padding: 0 {s(16)}px;
+                border-radius: {s(8)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
             }}
-            QPushButton:hover {{ background: #e2e8f0; }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         refresh_btn.clicked.connect(self._load_data)
         hdr.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(s(40), s(40))
+        close_btn.setFixedSize(s(36), s(36))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         close_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #fee2e2; color: #b91c1c;
-                font-size: {font(16)}px; font-weight: 700;
-                border-radius: {s(8)}px; border: none;
+                background: transparent;
+                color: {_SLATE_400};
+                font-weight: 700;
+                font-size: {font(14)}px;
+                border-radius: {s(8)}px;
+                border: 1px solid transparent;
+                outline: none;
             }}
-            QPushButton:hover {{ background: #fecaca; }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                color: {_SLATE_900};
+                border: 1px solid {_SLATE_200};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         close_btn.clicked.connect(self.reject)
         hdr.addWidget(close_btn)
         root.addLayout(hdr)
 
+        # Hairline
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {_SLATE_100}; border: none;")
+        root.addWidget(sep)
+
         # ── 2 view'li stacked: 0=xonalar ro'yxati, 1=stollar ─────────────
         self._stack = QStackedWidget()
         self._stack.setStyleSheet(f"""
             QStackedWidget {{
-                background: #f8fafc; border: 1px solid #e2e8f0;
-                border-radius: {s(12)}px;
+                background: white;
+                border: none;
             }}
         """)
 
@@ -314,55 +557,93 @@ class TablePickerDialog(QDialog):
 
         # ── Selected info + buttons ─────────────
         bottom = QHBoxLayout()
-        self._info_label = QLabel("Stol tanlanmagan")
-        self._info_label.setStyleSheet(
-            f"font-size: {font(15)}px; font-weight: 700; color: #64748b;"
+        bottom.setSpacing(s(10))
+        self._info_label = _no_frame_label(
+            "Stol tanlanmagan", _SLATE_500, 14, QFont.Weight.DemiBold, 0
         )
         bottom.addWidget(self._info_label)
         bottom.addStretch()
 
         # Qo'lda bo'shatish — band stol tanlanganda paydo bo'ladi
-        self._free_btn = QPushButton("🔓 Stolni bo'shatish")
-        self._free_btn.setFixedHeight(s(48))
+        self._free_btn = QPushButton("Stolni bo'shatish")
+        self._free_btn.setFixedHeight(s(46))
+        self._free_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._free_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._free_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #fff7ed; color: #c2410c;
-                font-weight: 700; font-size: {font(13)}px;
-                padding: 0 {s(16)}px; border-radius: {s(10)}px;
-                border: 1.5px solid #fdba74;
+                background: white;
+                color: {_RED_700};
+                font-weight: 700;
+                font-size: {font(13)}px;
+                letter-spacing: 0.5px;
+                padding: 0 {s(20)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_RED_200};
+                outline: none;
             }}
-            QPushButton:hover {{ background: #ffedd5; }}
+            QPushButton:hover {{
+                background: {_RED_50};
+                border-color: #fca5a5;
+            }}
+            QPushButton:pressed {{ background: #fee2e2; }}
         """)
         self._free_btn.clicked.connect(self._on_free_table)
         self._free_btn.setVisible(False)
         bottom.addWidget(self._free_btn)
 
         cancel_btn = QPushButton("Bekor")
-        cancel_btn.setFixedHeight(s(48))
+        cancel_btn.setFixedHeight(s(46))
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         cancel_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #f1f5f9; color: #475569;
-                font-weight: 700; font-size: {font(13)}px;
-                padding: 0 {s(20)}px; border-radius: {s(10)}px;
-                border: none;
+                background: white;
+                color: {_SLATE_700};
+                font-weight: 600;
+                font-size: {font(13)}px;
+                letter-spacing: 0.5px;
+                padding: 0 {s(24)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
             }}
-            QPushButton:hover {{ background: #e2e8f0; }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         cancel_btn.clicked.connect(self.reject)
         bottom.addWidget(cancel_btn)
 
-        self._select_btn = QPushButton("✓  Tanlash")
-        self._select_btn.setFixedHeight(s(48))
+        self._select_btn = QPushButton("Tanlash")
+        self._select_btn.setFixedHeight(s(46))
+        self._select_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._select_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._select_btn.setEnabled(False)
         self._select_btn.setStyleSheet(f"""
             QPushButton {{
-                background: #1d4ed8; color: white;
-                font-weight: 800; font-size: {font(14)}px;
-                padding: 0 {s(28)}px; border-radius: {s(10)}px;
-                border: none;
+                background: {_SLATE_900};
+                color: white;
+                font-weight: 800;
+                font-size: {font(13)}px;
+                letter-spacing: 1.5px;
+                padding: 0 {s(32)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_SLATE_900};
+                outline: none;
             }}
-            QPushButton:hover {{ background: #1e40af; }}
-            QPushButton:disabled {{ background: #cbd5e1; color: #94a3b8; }}
+            QPushButton:hover {{
+                background: {_SLATE_800};
+                border-color: {_SLATE_800};
+            }}
+            QPushButton:pressed {{ background: #0b1220; }}
+            QPushButton:disabled {{
+                background: {_SLATE_100};
+                color: {_SLATE_400};
+                border-color: {_SLATE_200};
+            }}
         """)
         self._select_btn.clicked.connect(self._on_select)
         bottom.addWidget(self._select_btn)
@@ -449,12 +730,15 @@ class TablePickerDialog(QDialog):
         """Bosqich 1: xonalar ro'yxati cards bilan."""
         self._stack.setCurrentIndex(0)
         self._back_btn.setVisible(False)
-        self._title_label.setText("Xonani tanlang")
+        self._title_label.setText("XONANI TANLANG")
+        if hasattr(self, "_subtitle_label"):
+            self._subtitle_label.setText("Stol band yoki bo'sh holatini ko'ring")
         # Tanlangan stolni tozalash (boshqa xonaga o'tilganda)
         self._selected_doc = None
-        self._info_label.setText("Xonani tanlang")
+        self._info_label.setText("Stol tanlanmagan")
         self._info_label.setStyleSheet(
-            f"font-size: {font(15)}px; font-weight: 700; color: #64748b;"
+            f"color: {_SLATE_500}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
         )
         self._select_btn.setEnabled(False)
         self._free_btn.setVisible(False)
@@ -465,8 +749,10 @@ class TablePickerDialog(QDialog):
         self._stack.setCurrentIndex(1)
         # Back tugma har doim ko'rinadi — xonalar ro'yxatiga qaytish
         self._back_btn.setVisible(True)
-        room_label = room if room else "Stollar"
-        self._title_label.setText(f"{room_label} — stol tanlang")
+        room_label = (room if room else "STOLLAR").upper()
+        self._title_label.setText(room_label)
+        if hasattr(self, "_subtitle_label"):
+            self._subtitle_label.setText("Stol tanlang yoki band stolni bo'shating")
         self._active_room = room
         # Tanlangan xonadagi stollar
         filtered = (
@@ -500,7 +786,16 @@ class TablePickerDialog(QDialog):
         all_room_names.sort()
         all_room_names = [r for r in all_room_names if r in room_table_count]
 
-        cols = 4
+        # Adaptive ustun soni: 1 xona — 1 col (full width), 2-3 xona — 2 col,
+        # 4+ xona — 3 col. Kartochka kompaktroq bo'lgani uchun ko'p sig'adi.
+        room_count = len(all_room_names)
+        if room_count <= 1:
+            cols = 1
+        elif room_count <= 4:
+            cols = 2
+        else:
+            cols = 3
+
         for i, rn in enumerate(all_room_names):
             total = room_table_count.get(rn, 0)
             busy = room_occupied.get(rn, 0)
@@ -510,62 +805,37 @@ class TablePickerDialog(QDialog):
 
         grid.setRowStretch(grid.rowCount(), 1)
 
-    def _make_room_card(self, room_name: str, total: int, free: int, busy: int) -> QPushButton:
-        """Xona kartochkasi — bosilsa stollarga o'tadi."""
-        card = QPushButton()
-        card.setFixedHeight(s(140))
-        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        # Rangi — bo'sh stollar borligi bo'yicha
-        if free > 0:
-            border = "#bbf7d0"
-            bg = "#f0fdf4"
-            badge_bg = "#16a34a"
-        else:
-            border = "#fecaca"
-            bg = "#fef2f2"
-            badge_bg = "#dc2626"
-        card.setStyleSheet(f"""
-            QPushButton {{
-                background: {bg}; color: #0f172a;
-                border: 2px solid {border};
-                border-radius: {s(14)}px;
-                padding: {s(14)}px;
-                text-align: left;
-            }}
-            QPushButton:hover {{
-                background: white;
-                border-color: #93c5fd;
-            }}
-            QPushButton:pressed {{ background: #eff6ff; }}
-        """)
-        # Layout o'rniga matn (button label) — multi-line
-        card.setText(
-            f"🏠  {room_name}\n\n"
-            f"  📋 Jami:  {total} stol\n"
-            f"  ✓ Bo'sh:  {free}\n"
-            f"  • Band:  {busy}"
-        )
-        card.setStyleSheet(card.styleSheet() + f"""
-            QPushButton {{ font-size: {font(14)}px; font-weight: 700; }}
-        """)
-        card.clicked.connect(lambda _=None, r=room_name: self._show_tables_view(r))
+    def _make_room_card(self, room_name: str, total: int, free: int, busy: int) -> QWidget:
+        """Xona kartochkasi — clickable QFrame, ichida elite typography."""
+        # Kartochka tugma o'rniga QFrame + click event
+        card = _RoomCard(room_name, total, free, busy)
+        card.clicked.connect(lambda r=room_name: self._show_tables_view(r))
         return card
 
     def _show_empty_state(self):
         # Rooms view'ga o'tib u yerda xabar ko'rsatamiz
         self._stack.setCurrentIndex(0)
         self._back_btn.setVisible(False)
-        self._title_label.setText("Stol tanlang")
+        self._title_label.setText("STOL TANLANG")
         if self._rooms_canvas.layout() is not None:
             self._clear_layout(self._rooms_canvas.layout())
             QWidget().setLayout(self._rooms_canvas.layout())
         v = QVBoxLayout(self._rooms_canvas)
         v.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        msg = QLabel("🚫  Stollar topilmadi\n\n"
-                     "ERPNext da URY Table yarating va sinxronlang.")
-        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        msg.setStyleSheet(f"font-size: {font(15)}px; color: #94a3b8; padding: {s(40)}px;")
-        v.addWidget(msg)
+        v.setSpacing(s(8))
+
+        title = _no_frame_label(
+            "Stollar topilmadi", _SLATE_900, 15, QFont.Weight.Bold, 0.5
+        )
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(title)
+
+        sub = _no_frame_label(
+            "ERPNext da URY Table yarating va sinxronlang",
+            _SLATE_500, 12, QFont.Weight.Medium, 0,
+        )
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        v.addWidget(sub)
 
 
     def _render_tables(self, tables: list):
@@ -641,12 +911,15 @@ class TablePickerDialog(QDialog):
 
     def _update_selection_info(self, t: RestaurantTable):
         room_label = f"{t.restaurant_room} / " if t.restaurant_room else ""
-        seats = f"({t.no_of_seats}o'rin)" if t.no_of_seats else ""
-        status = " — BAND" if t.occupied else ""
-        self._info_label.setText(f"Tanlangan: {room_label}{t.name} {seats}{status}")
+        seats = f" · {t.no_of_seats} o'rin" if t.no_of_seats else ""
+        status = "  ·  BAND" if t.occupied else ""
+        self._info_label.setText(
+            f"Tanlangan: {room_label}{t.name}{seats}{status}"
+        )
+        color = _RED_700 if t.occupied else _SLATE_900
         self._info_label.setStyleSheet(
-            f"font-size: {font(15)}px; font-weight: 700;"
-            f" color: {'#b91c1c' if t.occupied else '#0f172a'};"
+            f"color: {color}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
         )
         # Faqat bo'sh stol tanlash mumkin (lekin band stolni ko'rsatishga ruxsat)
         self._select_btn.setEnabled(not t.occupied)

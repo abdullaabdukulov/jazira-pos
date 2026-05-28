@@ -1,6 +1,19 @@
 from PyQt6.QtWidgets import QWidget, QGridLayout, QPushButton
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, Qt
 from ui.scale import s, font
+
+
+# ── Elite palette ─────────────────────────────────────
+_SLATE_900 = "#0f172a"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+_RED_700 = "#b91c1c"
+_RED_200 = "#fecaca"
+_RED_50 = "#fef2f2"
 
 
 class TouchNumpad(QWidget):
@@ -29,63 +42,68 @@ class TouchNumpad(QWidget):
             btn = QPushButton()
 
             if text == 'BACK':
-                btn.setText("⌫  O'CHIRISH")
+                btn.setText("O'CHIRISH")
                 btn.setObjectName("backspace")
             elif text == 'C':
-                btn.setText("C  Tozalash")
+                btn.setText("TOZALASH")
                 btn.setObjectName("clear")
             else:
                 btn.setText(text)
 
-            # Touch-friendly: katta balandlik
             btn.setFixedHeight(s(68))
             btn.setMinimumWidth(s(80))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
             btn.setStyleSheet(f"""
                 QPushButton {{
-                    background: #ffffff;
-                    border: 1.5px solid #d1d5db;
+                    background: white;
+                    border: 1px solid {_SLATE_200};
                     border-radius: {s(12)}px;
-                    font-size: {font(22)}px;
-                    font-weight: 700;
-                    color: #1f2937;
+                    font-size: {font(24)}px;
+                    font-weight: 800;
+                    color: {_SLATE_900};
+                    outline: none;
                 }}
                 QPushButton:hover {{
-                    background: #f0f9ff;
-                    border-color: #3b82f6;
-                    color: #1d4ed8;
+                    background: #fff7ed;
+                    border: 1px solid #c89968;
+                    color: #a07a44;
                 }}
                 QPushButton:pressed {{
-                    background: #dbeafe;
-                    border-color: #2563eb;
+                    background: #ffedd5;
                 }}
                 QPushButton#backspace {{
-                    background: #fff1f2;
-                    border-color: #fca5a5;
-                    color: #dc2626;
-                    font-size: {font(16)}px;
-                    font-weight: 700;
+                    background: {_RED_50};
+                    border: 1px solid {_RED_200};
+                    color: {_RED_700};
+                    font-size: {font(13)}px;
+                    font-weight: 800;
+                    letter-spacing: 2px;
                 }}
                 QPushButton#backspace:hover {{
                     background: #fee2e2;
-                    border-color: #ef4444;
+                    border-color: #fca5a5;
+                    color: #991b1b;
                 }}
                 QPushButton#backspace:pressed {{
                     background: #fecaca;
                 }}
                 QPushButton#clear {{
-                    background: #fffbeb;
-                    border-color: #fcd34d;
-                    color: #b45309;
-                    font-size: {font(14)}px;
-                    font-weight: 700;
+                    background: white;
+                    border: 1px solid {_SLATE_200};
+                    color: {_SLATE_500};
+                    font-size: {font(11)}px;
+                    font-weight: 800;
+                    letter-spacing: 2px;
                 }}
                 QPushButton#clear:hover {{
-                    background: #fef3c7;
-                    border-color: #f59e0b;
+                    background: {_SLATE_50};
+                    border-color: {_SLATE_300};
+                    color: {_SLATE_900};
                 }}
                 QPushButton#clear:pressed {{
-                    background: #fde68a;
+                    background: {_SLATE_100};
                 }}
             """)
 

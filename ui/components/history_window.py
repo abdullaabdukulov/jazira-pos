@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QScroller, QScrollerProperties,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QFont
 from core.api import FrappeAPI
 from core.logger import get_logger
 from core.constants import HISTORY_FETCH_LIMIT
@@ -14,6 +15,40 @@ from database.models import PendingInvoice
 from ui.components.dialogs import InfoDialog
 
 logger = get_logger(__name__)
+
+
+# ── Elite palette ────────────────────────────────────────
+_GOLD = "#c89968"
+_SLATE_900 = "#0f172a"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_400 = "#94a3b8"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+_RED_700 = "#b91c1c"
+_RED_200 = "#fecaca"
+_RED_50 = "#fef2f2"
+_AMBER_700 = "#c2410c"
+_AMBER_200 = "#fed7aa"
+_AMBER_50 = "#fff7ed"
+_EMERALD_700 = "#047857"
+_EMERALD_200 = "#a7f3d0"
+_EMERALD_50 = "#ecfdf5"
+
+
+def _row_cell(button: QPushButton) -> QWidget:
+    """Markazlangan jadval qator cell — subtle padding, NO border."""
+    cell = QWidget()
+    cell.setStyleSheet("background: transparent; border: none;")
+    cell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+    layout = QHBoxLayout(cell)
+    layout.setContentsMargins(s(12), 0, s(12), 0)
+    layout.setSpacing(0)
+    layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+    layout.addStretch()
+    return cell
 
 
 def _touch_scroll(table):
@@ -681,83 +716,220 @@ class HistoryWindow(QWidget):
     def _init_ui(self):
         self.setStyleSheet("background: white;")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(s(16), s(12), s(16), s(12))
-        layout.setSpacing(s(10))
+        root = QVBoxLayout(self)
+        root.setContentsMargins(s(28), s(18), s(28), s(20))
+        root.setSpacing(s(14))
 
-        # ── Header row ──────────────────────
-        hdr_row = QHBoxLayout()
+        # ── Header ─────────────────────────────
+        header = QHBoxLayout()
+        header.setSpacing(s(14))
 
-        title = QLabel("So'nggi tranzaksiyalar")
-        title.setStyleSheet(f"font-size: {font(18)}px; font-weight: 800; color: #1e293b;")
-        hdr_row.addWidget(title)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(s(2))
 
-        hint = QLabel("(2× bosing — tafsilot)")
-        hint.setStyleSheet(f"font-size: {font(11)}px; color: #94a3b8; font-style: italic;")
-        hdr_row.addWidget(hint)
-        hdr_row.addStretch()
+        title = QLabel("SO'NGGI TRANZAKSIYALAR")
+        title.setFrameShape(QFrame.Shape.NoFrame)
+        title.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tf = QFont()
+        tf.setPixelSize(font(15))
+        tf.setWeight(QFont.Weight.Black)
+        tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        title.setFont(tf)
+        title.setStyleSheet(
+            f"color: {_SLATE_900}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        title_block.addWidget(title)
 
-        refresh_btn = QPushButton("⟳  Yangilash")
-        refresh_btn.setFixedHeight(s(44))
+        subtitle = QLabel("Buyurtmani 2 marta bosing — tafsilot")
+        subtitle.setFrameShape(QFrame.Shape.NoFrame)
+        subtitle.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sf = QFont()
+        sf.setPixelSize(font(11))
+        sf.setWeight(QFont.Weight.Medium)
+        subtitle.setFont(sf)
+        subtitle.setStyleSheet(
+            f"color: {_SLATE_500}; background: transparent;"
+            f" border: none; outline: none;"
+        )
+        title_block.addWidget(subtitle)
+
+        header.addLayout(title_block)
+        header.addStretch()
+
+        refresh_btn = QPushButton("Yangilash")
+        refresh_btn.setFixedHeight(s(36))
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         refresh_btn.setStyleSheet(f"""
             QPushButton {{
-                padding: 0 {s(16)}px; background: #f1f5f9; color: #475569;
-                font-weight: 600; font-size: {font(13)}px;
-                border-radius: {s(8)}px; border: none;
+                background: white;
+                color: {_SLATE_700};
+                font-weight: 600;
+                font-size: {font(12)}px;
+                border-radius: {s(8)}px;
+                border: 1px solid {_SLATE_200};
+                padding: 0 {s(16)}px;
             }}
-            QPushButton:hover {{ background: #e2e8f0; }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                border-color: {_SLATE_300};
+                color: {_SLATE_900};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         refresh_btn.clicked.connect(self.load_history)
-        hdr_row.addWidget(refresh_btn)
+        header.addWidget(refresh_btn)
 
         close_btn = QPushButton("✕")
-        close_btn.setFixedSize(s(44), s(44))
+        close_btn.setFixedSize(s(36), s(36))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         close_btn.setStyleSheet(f"""
-            QPushButton {{ background: #fee2e2; color: #b91c1c;
-                font-weight: 700; font-size: {font(14)}px; border-radius: {s(8)}px; border: none; }}
-            QPushButton:hover {{ background: #fecaca; }}
+            QPushButton {{
+                background: transparent;
+                color: {_SLATE_400};
+                font-weight: 700;
+                font-size: {font(14)}px;
+                border-radius: {s(8)}px;
+                border: 1px solid transparent;
+            }}
+            QPushButton:hover {{
+                background: {_SLATE_50};
+                color: {_SLATE_900};
+                border: 1px solid {_SLATE_200};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
         """)
         close_btn.clicked.connect(self.hide)
-        hdr_row.addWidget(close_btn)
+        header.addWidget(close_btn)
 
-        layout.addLayout(hdr_row)
+        root.addLayout(header)
 
         sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background: #e2e8f0; max-height: 1px;")
-        layout.addWidget(sep)
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(f"background: {_SLATE_100}; border: none;")
+        root.addWidget(sep)
 
         # ── Table ────────────────────────────
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(["ID", "Sana", "Vaqt", "Mijoz", "Summa", "Bekor", "Chop etish"])
+        self.table.setHorizontalHeaderLabels([
+            "ID", "SANA", "VAQT", "MIJOZ", "SUMMA", "BEKOR", "CHOP ETISH",
+        ])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
+        self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setStyleSheet(f"""
             QTableWidget {{
-                border: none; background: white; font-size: {font(13)}px;
+                border: none;
+                background: white;
+                font-size: {font(13)}px;
+                color: {_SLATE_900};
+                outline: none;
+                gridline-color: transparent;
+                show-decoration-selected: 1;
             }}
-            QTableWidget::item {{ padding: {s(5)}px {s(8)}px; border-bottom: 1px solid #f1f5f9; }}
-            QTableWidget::item:selected {{ background: #dbeafe; color: #1e40af; }}
+            QTableWidget::item {{
+                padding: {s(14)}px {s(18)}px;
+                border: none;
+                border-right: 1px solid {_SLATE_100};
+            }}
+            QTableWidget::item:last {{
+                border-right: none;
+            }}
+            QTableWidget::item:alternate {{
+                background: {_SLATE_50};
+            }}
+            QTableWidget::item:hover {{
+                background: #fffbeb;
+            }}
+            QTableWidget::item:selected {{
+                background: #fff7ed;
+                color: {_AMBER_700};
+            }}
+            QHeaderView {{ background: transparent; border: none; }}
             QHeaderView::section {{
-                background: #f8fafc; color: #94a3b8;
-                font-size: {font(11)}px; font-weight: 700; letter-spacing: 0.5px;
-                padding: {s(8)}px {s(8)}px; border: none;
-                border-bottom: 1px solid #e2e8f0;
+                background: white;
+                color: {_SLATE_400};
+                font-size: {font(10)}px;
+                font-weight: 800;
+                letter-spacing: 2px;
+                padding: {s(12)}px {s(18)}px;
+                border: none;
+                border-bottom: 2px solid {_SLATE_200};
+                border-right: 1px solid {_SLATE_100};
+            }}
+            QHeaderView::section:last {{
+                border-right: none;
             }}
         """)
         self.table.itemDoubleClicked.connect(self._show_details)
 
         hdr = self.table.horizontalHeader()
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # Default header alignment — chap, qiymat alignmentiga mos
+        hdr.setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         hdr.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        self.table.setColumnWidth(5, s(110))
-        self.table.setColumnWidth(6, s(110))
-        layout.addWidget(self.table)
+        self.table.setColumnWidth(0, s(170))   # ID — SK-2026-00029 sig'adi
+        self.table.setColumnWidth(1, s(130))   # Sana
+        self.table.setColumnWidth(2, s(100))   # Vaqt
+        self.table.setColumnWidth(4, s(160))   # Summa — "30 000 UZS" to'liq sig'adi
+        self.table.setColumnWidth(5, s(130))   # Bekor
+        self.table.setColumnWidth(6, s(140))   # Chop
+
+        # Summa va Bekor / Chop ustun sarlavhalari — markazga (qiymatlari ham mos)
+        right_align = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        center_align = Qt.AlignmentFlag.AlignCenter
+        self.table.horizontalHeaderItem(4).setTextAlignment(right_align)
+        self.table.horizontalHeaderItem(5).setTextAlignment(center_align)
+        self.table.horizontalHeaderItem(6).setTextAlignment(center_align)
+
+        root.addWidget(self.table)
         _touch_scroll(self.table)
+
+    def _row_button(self, text: str, color: str, border: str, hover_bg: str) -> QPushButton:
+        """Jadval ichidagi minimal text tugma — borderless, hover'da subtle tint."""
+        btn = QPushButton(text)
+        btn.setFixedHeight(s(30))
+        btn.setMinimumWidth(s(80))
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {color};
+                font-weight: 700;
+                font-size: {font(12)}px;
+                letter-spacing: 0.5px;
+                border-radius: {s(6)}px;
+                border: 1px solid transparent;
+                padding: 0 {s(14)}px;
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: {hover_bg};
+                border: 1px solid {border};
+            }}
+            QPushButton:pressed {{
+                background: {hover_bg};
+                border: 1px solid {color};
+            }}
+            QPushButton:disabled {{
+                background: transparent;
+                color: {_SLATE_400};
+                border: 1px solid transparent;
+            }}
+        """)
+        return btn
 
     def load_history(self):
         self.table.setRowCount(0)
@@ -771,55 +943,73 @@ class HistoryWindow(QWidget):
         self.table.setRowCount(0)
         for i, item in enumerate(data):
             self.table.insertRow(i)
-            self.table.setRowHeight(i, s(46))
+            self.table.setRowHeight(i, s(58))
             inv_name = item.get("name", "")
             status = item.get("status", "")
 
-            self.table.setItem(i, 0, QTableWidgetItem(inv_name))
-            self.table.setItem(i, 1, QTableWidgetItem(item.get("posting_date", "")))
-            self.table.setItem(i, 2, QTableWidgetItem(item.get("posting_time", "")[:5]))
-            self.table.setItem(i, 3, QTableWidgetItem(item.get("customer", "")))
+            id_item = QTableWidgetItem(inv_name)
+            id_font = QFont()
+            id_font.setPixelSize(font(12))
+            id_font.setWeight(QFont.Weight.DemiBold)
+            id_item.setFont(id_font)
+            id_item.setForeground(QBrush(QColor(_SLATE_700)))
+            self.table.setItem(i, 0, id_item)
+
+            date_item = QTableWidgetItem(item.get("posting_date", ""))
+            date_item.setForeground(QBrush(QColor(_SLATE_500)))
+            self.table.setItem(i, 1, date_item)
+
+            time_item = QTableWidgetItem(item.get("posting_time", "")[:5])
+            time_item.setForeground(QBrush(QColor(_SLATE_500)))
+            self.table.setItem(i, 2, time_item)
+
+            cust_item = QTableWidgetItem(item.get("customer", ""))
+            cust_font = QFont()
+            cust_font.setPixelSize(font(13))
+            cust_font.setWeight(QFont.Weight.DemiBold)
+            cust_item.setFont(cust_font)
+            cust_item.setForeground(QBrush(QColor(_SLATE_900)))
+            self.table.setItem(i, 3, cust_item)
+
             amt = QTableWidgetItem(f"{item.get('grand_total', 0):,.0f} UZS".replace(",", " "))
             amt.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
+            amt_font = QFont()
+            amt_font.setPixelSize(font(13))
+            amt_font.setWeight(QFont.Weight.Bold)
+            amt.setFont(amt_font)
+            amt.setForeground(QBrush(QColor(_SLATE_900)))
             self.table.setItem(i, 4, amt)
 
             is_cancelled = status == "Cancelled" or inv_name in self._locally_cancelled
             if is_cancelled:
-                # Server "Cancelled" qaytsa yoki mahalliy bekor qilingan bo'lsa
                 if status == "Cancelled":
-                    self._locally_cancelled.discard(inv_name)  # serverda tasdiqlandi — tozalash
+                    self._locally_cancelled.discard(inv_name)
                 lbl = QLabel("Bekor qilingan")
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
+                lbl.setStyleSheet(
+                    f"color: {_RED_700}; font-weight: 700; font-size: {font(11)}px;"
+                    f" letter-spacing: 0.5px;"
+                )
                 self.table.setCellWidget(i, 5, lbl)
             else:
-                cancel_btn = QPushButton("Bekor")
-                cancel_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: #fff7ed; color: #ea580c;
-                        font-weight: 600; font-size: {font(12)}px;
-                        border-radius: {s(6)}px; border: 1px solid #fed7aa;
-                        padding: {s(4)}px {s(8)}px;
-                    }}
-                    QPushButton:hover {{ background: #ffedd5; }}
-                """)
+                cancel_btn = self._row_button(
+                    "Bekor",
+                    color=_RED_700,
+                    border=_RED_200,
+                    hover_bg=_RED_50,
+                )
                 cancel_btn.clicked.connect(lambda _, inv=inv_name: self._confirm_cancel(inv))
-                self.table.setCellWidget(i, 5, cancel_btn)
+                self.table.setCellWidget(i, 5, _row_cell(cancel_btn))
 
             # Qayta chop etish tugmasi (barcha cheklar uchun)
-            reprint_btn = QPushButton("🖨 Chop")
-            reprint_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: #f0fdf4; color: #15803d;
-                    font-weight: 600; font-size: {font(12)}px;
-                    border-radius: {s(6)}px; border: 1px solid #bbf7d0;
-                    padding: {s(4)}px {s(8)}px;
-                }}
-                QPushButton:hover {{ background: #dcfce7; }}
-                QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; border-color: #e2e8f0; }}
-            """)
+            reprint_btn = self._row_button(
+                "Chop",
+                color=_EMERALD_700,
+                border=_EMERALD_200,
+                hover_bg=_EMERALD_50,
+            )
             reprint_btn.clicked.connect(lambda _, inv=inv_name, btn=reprint_btn: self._reprint(inv, btn))
-            self.table.setCellWidget(i, 6, reprint_btn)
+            self.table.setCellWidget(i, 6, _row_cell(reprint_btn))
 
         self._add_offline_rows()
 
@@ -854,7 +1044,7 @@ class HistoryWindow(QWidget):
 
             i = self.table.rowCount()
             self.table.insertRow(i)
-            self.table.setRowHeight(i, s(46))
+            self.table.setRowHeight(i, s(58))
 
             # ID ustuni — "OFLAYN" belgisi bilan
             id_item = QTableWidgetItem(f"OFLAYN")
@@ -874,28 +1064,30 @@ class HistoryWindow(QWidget):
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 if inv.status == "CancelPending":
                     lbl.setToolTip("Serverga sinxronlanishi kutilmoqda")
-                lbl.setStyleSheet(f"color: #ef4444; font-weight: 600; font-size: {font(11)}px;")
+                lbl.setStyleSheet(
+                    f"color: {_RED_700}; font-weight: 700; font-size: {font(11)}px;"
+                    f" letter-spacing: 0.5px;"
+                )
                 self.table.setCellWidget(i, 5, lbl)
             elif inv.status == "Pending":
-                cancel_btn = QPushButton("Bekor")
-                cancel_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: #fef3c7; color: #b45309;
-                        font-weight: 600; font-size: {font(12)}px;
-                        border-radius: {s(6)}px; border: 1px solid #fde68a;
-                        padding: {s(4)}px {s(8)}px;
-                    }}
-                    QPushButton:hover {{ background: #fde68a; }}
-                """)
+                cancel_btn = self._row_button(
+                    "Bekor",
+                    color=_AMBER_700,
+                    border=_AMBER_200,
+                    hover_bg=_AMBER_50,
+                )
                 cancel_btn.clicked.connect(
                     lambda _, pid=inv.id, idata=inv.invoice_data: self._confirm_cancel_offline(pid, idata)
                 )
-                self.table.setCellWidget(i, 5, cancel_btn)
+                self.table.setCellWidget(i, 5, _row_cell(cancel_btn))
             else:
                 # Failed
                 lbl = QLabel("Xato")
                 lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                lbl.setStyleSheet(f"color: #dc2626; font-weight: 600; font-size: {font(11)}px;")
+                lbl.setStyleSheet(
+                    f"color: {_RED_700}; font-weight: 700; font-size: {font(11)}px;"
+                    f" letter-spacing: 0.5px;"
+                )
                 self.table.setCellWidget(i, 5, lbl)
 
             # Chop etish ustuni — oflayn orderlar uchun chop etish tugmasi

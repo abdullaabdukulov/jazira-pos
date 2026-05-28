@@ -1,8 +1,14 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QLabel, QVBoxLayout, QHBoxLayout, QWidget,
-    QPushButton, QSplitter, QTabWidget, QStackedWidget,
+    QPushButton, QSplitter, QTabWidget, QStackedWidget, QFrame,
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+from PyQt6.QtCore import (
+    Qt, QTimer, QThread, pyqtSignal, pyqtProperty, QSize, QRect,
+    QPropertyAnimation, QEasingCurve, QAbstractAnimation,
+)
+from PyQt6.QtGui import (
+    QBrush, QColor, QFont, QLinearGradient, QPainter, QPen, QRadialGradient,
+)
 from database.sync import SyncWorker
 from database.offline_sync import OfflineSyncWorker
 from database.migrations import initialize_db
@@ -28,13 +34,497 @@ from ui.components.offline_block_overlay import OfflineBlockOverlay
 from core.realtime import RealtimeClient
 from core.connection_monitor import ConnectionMonitor, STATE_ONLINE, STATE_OFFLINE
 from ui.icons import (
-    icon_plus, icon_sync, icon_history, icon_clock,
-    icon_lock, icon_signal, icon_loading,
-    icon_wifi, icon_building, icon_user,
+    icon_plus, icon_clock, icon_signal, icon_building,
 )
 from ui.scale import s, font
 
 logger = get_logger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════
+#  Elite identity strip — brand mark, status, company, cashier
+# ═══════════════════════════════════════════════════════════
+_GOLD = "#c89968"
+_GOLD_LIGHT = "#e6c693"
+_GOLD_DEEP = "#a07a44"
+_SLATE_900 = "#0f172a"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_400 = "#94a3b8"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+
+
+class BrandMark(QWidget):
+    """Oltin gradient disc + oq italik 'J' — top bar brand belgisi."""
+
+    def __init__(self, size: int = 34, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Oltin gradient fill
+        grad = QLinearGradient(0, 0, 0, h)
+        grad.setColorAt(0.0, QColor(_GOLD_LIGHT))
+        grad.setColorAt(1.0, QColor(_GOLD_DEEP))
+        p.setBrush(QBrush(grad))
+        p.setPen(QPen(QColor(_GOLD_DEEP), 1))
+        p.drawEllipse(1, 1, w - 2, h - 2)
+
+        # J monogrammasi (italik, oq)
+        f = QFont("Georgia", -1)
+        f.setPixelSize(int(w * 0.55))
+        f.setWeight(QFont.Weight.Bold)
+        f.setItalic(True)
+        p.setFont(f)
+        p.setPen(QColor("white"))
+        p.drawText(
+            QRect(0, int(-h * 0.04), w, h),
+            Qt.AlignmentFlag.AlignCenter,
+            "J",
+        )
+
+
+class AvatarDisc(QWidget):
+    """Kassir avatar — outer slate ring + ichki oltin gradient disc + initiallar."""
+
+    def __init__(self, size: int = 38, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._initials = "—"
+
+    def set_initials(self, initials: str):
+        self._initials = (initials or "—").upper()[:2]
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        # Outer ambient gold halo (juda nozik)
+        cx, cy = w / 2, h / 2
+        halo = QRadialGradient(cx, cy, w * 0.6)
+        halo.setColorAt(0.45, QColor(200, 153, 104, 26))
+        halo.setColorAt(1.0, QColor(200, 153, 104, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(halo))
+        p.drawEllipse(0, 0, w, h)
+
+        # Asosiy oltin gradient disc
+        margin = max(2, int(w * 0.08))
+        disc_size = w - 2 * margin
+        grad = QLinearGradient(0, margin, 0, h - margin)
+        grad.setColorAt(0.0, QColor(_GOLD_LIGHT))
+        grad.setColorAt(1.0, QColor(_GOLD_DEEP))
+        p.setBrush(QBrush(grad))
+        # Outer subtle ring — slate-200 tonida
+        p.setPen(QPen(QColor(_GOLD_DEEP), 1))
+        p.drawEllipse(margin, margin, disc_size, disc_size)
+
+        # Initiallar — oq, weight Black
+        f = QFont()
+        f.setPixelSize(int(w * 0.38))
+        f.setWeight(QFont.Weight.Black)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.8)
+        p.setFont(f)
+        p.setPen(QColor("white"))
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._initials)
+
+
+class BrandBlock(QWidget):
+    """Top-bar brand: oltin disc + dinamik brand nomi + POINT OF SALE sub.
+
+    Brand nomi POS Profile.custom_company_brand_name dan keladi (yo'q bo'lsa
+    Company nomi, oxirgi chora — "JAZIRA POS").
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(6), 0, s(8), 0)
+        layout.setSpacing(s(12))
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        layout.addWidget(BrandMark(s(36)))
+
+        text = QVBoxLayout()
+        text.setSpacing(s(1))
+        text.setContentsMargins(0, 0, 0, 0)
+        text.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self._name = QLabel(self._resolve_brand())
+        self._name.setFrameShape(QFrame.Shape.NoFrame)
+        self._name.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        nf = QFont()
+        nf.setPixelSize(font(15))
+        nf.setWeight(QFont.Weight.Black)
+        nf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        self._name.setFont(nf)
+        self._name.setStyleSheet(
+            f"color: {_SLATE_900}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        text.addWidget(self._name)
+
+        sub = QLabel("POINT  OF  SALE")
+        sub.setFrameShape(QFrame.Shape.NoFrame)
+        sub.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        sf = QFont()
+        sf.setPixelSize(font(8))
+        sf.setWeight(QFont.Weight.Bold)
+        sf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 3)
+        sub.setFont(sf)
+        sub.setStyleSheet(
+            f"color: {_GOLD}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        text.addWidget(sub)
+
+        layout.addLayout(text)
+
+    @staticmethod
+    def _resolve_brand() -> str:
+        try:
+            cfg = load_config()
+        except Exception:
+            return "POS"
+        base = cfg.get("brand_name") or cfg.get("company") or ""
+        base = str(base).strip().upper()
+        if not base:
+            return "POS"
+        # POS suffix qo'shamiz, agar foydalanuvchi o'zi yozmagan bo'lsa
+        if "POS" in base:
+            return base
+        return f"{base} POS"
+
+    def refresh(self):
+        """Config yangilangach brand'ni qayta-render."""
+        if hasattr(self, "_name"):
+            new = self._resolve_brand()
+            if self._name.text() != new:
+                self._name.setText(new)
+
+
+class StatusIndicator(QWidget):
+    """Status uchun elite painted indicator — dot emas, sof symbolic shape.
+
+    Holatlar:
+      online   — halqa ichida emerald check (✓), nafas oluvchi nozik glow
+      offline  — halqa ichida red ×
+      checking — 3 ta vertikal nuqta (loading)
+    """
+
+    def __init__(self, size: int = 18, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._state = "checking"
+        self._color = QColor("#94a3b8")
+        self._pulse = 0.0
+        self._anim: QPropertyAnimation | None = None
+
+    def set_state(self, state: str, hex_color: str):
+        self._state = state
+        self._color = QColor(hex_color)
+        self.update()
+
+    def _get_pulse(self) -> float:
+        return self._pulse
+
+    def _set_pulse(self, v: float):
+        self._pulse = float(v)
+        self.update()
+
+    pulse = pyqtProperty(float, _get_pulse, _set_pulse)
+
+    def start_pulse(self):
+        self.stop_pulse()
+        self._anim = QPropertyAnimation(self, b"pulse", self)
+        self._anim.setDuration(1800)
+        self._anim.setStartValue(0.0)
+        self._anim.setKeyValueAt(0.5, 1.0)
+        self._anim.setEndValue(0.0)
+        self._anim.setLoopCount(-1)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutSine)
+        self._anim.start()
+
+    def stop_pulse(self):
+        if self._anim is not None:
+            self._anim.stop()
+            self._anim = None
+        self._pulse = 0.0
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        cx, cy = w / 2, h / 2
+        r = min(w, h) / 2 - max(1, w * 0.06)
+
+        # Nafas oluvchi nozik glow (faqat onlinde, pulse 0..1)
+        if self._pulse > 0:
+            glow_r = r * (1.0 + self._pulse * 0.7)
+            glow = QRadialGradient(cx, cy, glow_r * 1.4)
+            gc = QColor(self._color)
+            gc.setAlphaF(0.28 * (1.0 - self._pulse))
+            glow.setColorAt(0.30, gc)
+            glow.setColorAt(1.0, QColor(self._color.red(), self._color.green(), self._color.blue(), 0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(glow))
+            p.drawEllipse(int(cx - glow_r * 1.4), int(cy - glow_r * 1.4),
+                          int(glow_r * 2.8), int(glow_r * 2.8))
+
+        # Halqa (ring) — har 3 holat uchun ham asos
+        ring_pen = QPen(self._color, max(1.0, w * 0.10))
+        ring_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(ring_pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(int(cx - r), int(cy - r), int(r * 2), int(r * 2))
+
+        # Ichidagi symbolic shape
+        stroke = QPen(self._color, max(1.4, w * 0.13))
+        stroke.setCapStyle(Qt.PenCapStyle.RoundCap)
+        stroke.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        p.setPen(stroke)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        if self._state == "online":
+            # Check ✓
+            from PyQt6.QtGui import QPainterPath
+            path = QPainterPath()
+            path.moveTo(cx - r * 0.40, cy + r * 0.05)
+            path.lineTo(cx - r * 0.05, cy + r * 0.35)
+            path.lineTo(cx + r * 0.50, cy - r * 0.30)
+            p.drawPath(path)
+        elif self._state == "offline":
+            # ✕
+            off = r * 0.40
+            p.drawLine(int(cx - off), int(cy - off), int(cx + off), int(cy + off))
+            p.drawLine(int(cx + off), int(cy - off), int(cx - off), int(cy + off))
+        else:
+            # 3 ta nuqta — loading
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(self._color)
+            dr = max(1.0, w * 0.07)
+            for dx in (-r * 0.45, 0.0, r * 0.45):
+                p.drawEllipse(int(cx + dx - dr), int(cy - dr), int(dr * 2), int(dr * 2))
+
+
+class StatusPill(QFrame):
+    """Server holati — pill + pulsing dot (online holatida nafas oladi)."""
+
+    _CFG = {
+        "online":   ("#f0fdf4", "#bbf7d0", "#047857", "#10b981", "Online"),
+        "offline":  ("#fef2f2", "#fecaca", "#b91c1c", "#ef4444", "Offline"),
+        "checking": ("#f8fafc", "#e2e8f0", "#475569", "#94a3b8", "Tekshirilmoqda"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(14), s(6), s(16), s(6))
+        layout.setSpacing(s(10))
+
+        self._indicator = StatusIndicator(s(16))
+        layout.addWidget(self._indicator, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        self._text = QLabel("")
+        self._text.setFrameShape(QFrame.Shape.NoFrame)
+        self._text.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tf = QFont()
+        tf.setPixelSize(font(11))
+        tf.setWeight(QFont.Weight.Bold)
+        tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        self._text.setFont(tf)
+        layout.addWidget(self._text)
+
+        self.set_state("checking")
+
+    def set_state(self, state: str):
+        bg, border, text_c, dot_c, label = self._CFG.get(
+            state, self._CFG["checking"]
+        )
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: {s(13)}px;
+            }}
+        """)
+        self._indicator.set_state(state, dot_c)
+        self._text.setStyleSheet(
+            f"color: {text_c}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        self._text.setText(label.upper() if state == "online" else label)
+        # Faqat online holatida nafas oladi
+        if state == "online":
+            self._indicator.start_pulse()
+        else:
+            self._indicator.stop_pulse()
+
+
+class CompanyChip(QFrame):
+    """Kompaniya pill — oltin chap aksent chiziq + UPPERCASE nom.
+
+    Ikonka o'rniga chap chetida 3px oltin vertikal aksent — minimalist + brand.
+    """
+
+    def __init__(self, name: str = "", parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        # Chap padding kichikroq — oltin aksent uchun joy
+        layout.setContentsMargins(s(14), s(7), s(16), s(7))
+        layout.setSpacing(0)
+
+        self._text = QLabel("")
+        self._text.setFrameShape(QFrame.Shape.NoFrame)
+        self._text.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tf = QFont()
+        tf.setPixelSize(font(11))
+        tf.setWeight(QFont.Weight.Black)
+        tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        self._text.setFont(tf)
+        self._text.setStyleSheet(
+            f"color: {_SLATE_900}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        layout.addWidget(self._text)
+
+        # Chap chetda oltin aksent chizig'i
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: white;
+                border: 1px solid {_SLATE_200};
+                border-left: 3px solid {_GOLD};
+                border-top-left-radius: {s(6)}px;
+                border-bottom-left-radius: {s(6)}px;
+                border-top-right-radius: {s(13)}px;
+                border-bottom-right-radius: {s(13)}px;
+            }}
+        """)
+        self.set_company(name)
+
+    def set_company(self, name: str):
+        self._text.setText((name or "—").upper())
+
+
+class CashierCard(QWidget):
+    """Avatar disc + ism + rol caps (Kassir=gold, Ofitsant=binafsha).
+
+    Elite ikki-qatorli ko'rinish:
+      [AN]   Asadbek Nizomiddinov
+             KASSIR  ·  Active     ← caps + letter-spacing + tint accent
+    """
+
+    _ROLE_CFG = {
+        # (matn rangi, sub-aksent rangi)
+        "Kassir":   ("#a07a44", _GOLD),
+        "Ofitsant": ("#6d28d9", "#8b5cf6"),
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(2), 0, s(6), 0)
+        layout.setSpacing(s(12))
+
+        self._avatar = AvatarDisc(s(40))
+        layout.addWidget(self._avatar, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        right = QVBoxLayout()
+        right.setSpacing(s(2))
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # Ism — bold slate-900
+        self._name = QLabel("—")
+        self._name.setFrameShape(QFrame.Shape.NoFrame)
+        self._name.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        nf = QFont()
+        nf.setPixelSize(font(13))
+        nf.setWeight(QFont.Weight.Black)
+        nf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
+        self._name.setFont(nf)
+        self._name.setStyleSheet(
+            f"color: {_SLATE_900}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        right.addWidget(self._name)
+
+        # Rol qator — bullet bilan
+        role_row = QHBoxLayout()
+        role_row.setContentsMargins(0, 0, 0, 0)
+        role_row.setSpacing(s(6))
+
+        # Bullet kichik aksent dot
+        self._role_dot = QLabel("●")
+        self._role_dot.setFrameShape(QFrame.Shape.NoFrame)
+        bd = QFont()
+        bd.setPixelSize(font(7))
+        self._role_dot.setFont(bd)
+        self._role_dot.setStyleSheet(
+            f"color: {_GOLD}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        role_row.addWidget(self._role_dot, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        # Rol matni — caps, letter-spacing
+        self._role_text = QLabel("")
+        self._role_text.setFrameShape(QFrame.Shape.NoFrame)
+        self._role_text.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        rf = QFont()
+        rf.setPixelSize(font(9))
+        rf.setWeight(QFont.Weight.Black)
+        rf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        self._role_text.setFont(rf)
+        self._role_text.setStyleSheet(
+            f"color: {_GOLD}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        role_row.addWidget(self._role_text, alignment=Qt.AlignmentFlag.AlignVCenter)
+        role_row.addStretch()
+
+        right.addLayout(role_row)
+        layout.addLayout(right)
+
+    def set_cashier(self, name: str, role: str = ""):
+        name = (name or "—").strip() or "—"
+        self._name.setText(name)
+        self._avatar.set_initials(self._initials(name))
+
+        if role:
+            text_c, dot_c = self._ROLE_CFG.get(role, self._ROLE_CFG["Kassir"])
+            self._role_text.setText(role.upper())
+            self._role_text.setStyleSheet(
+                f"color: {text_c}; background: transparent;"
+                f" border: none; outline: none; padding: 0; margin: 0;"
+            )
+            self._role_dot.setStyleSheet(
+                f"color: {dot_c}; background: transparent;"
+                f" border: none; outline: none; padding: 0; margin: 0;"
+            )
+            self._role_dot.setVisible(True)
+            self._role_text.setVisible(True)
+        else:
+            self._role_dot.setVisible(False)
+            self._role_text.setVisible(False)
+
+    @staticmethod
+    def _initials(name: str) -> str:
+        parts = (name or "").strip().split()
+        if not parts:
+            return "—"
+        if len(parts) == 1:
+            return parts[0][:2].upper()
+        return (parts[0][0] + parts[-1][0]).upper()
 
 
 class ConnectivityCheckWorker(QThread):
@@ -113,42 +603,211 @@ class PosOpeningCheckWorker(QThread):
 
 
 # ── Yagona top-bar tugma stili ──────────────────────
-_BTN_STYLE = """
-    QPushButton {{
-        background: {bg}; color: {fg};
-        font-weight: 700; font-size: {fs}px;
-        border-radius: {r}px; border: {border};
-        padding: 0 {px}px;
-    }}
-    QPushButton:hover {{ background: {hover}; }}
-    QPushButton:pressed {{ opacity: 0.85; }}
-    QPushButton:disabled {{ background: #f1f5f9; color: #94a3b8; border: none; }}
-"""
+def _btn_style(kind: str) -> str:
+    """Top-bar tugma stillari — elite palette (slate + subtle red).
 
-
-def _tb_btn(label: str, kind: str = "neutral") -> QPushButton:
-    """
     kind:
-      neutral  — quyuq slate, ko'pgina tugmalar uchun
-      primary  — ko'k, asosiy harakat (Yangi sotuv)
-      danger   — qizil (Kassa yopish)
-      ghost    — oq fon, chegara bilan (Offline counter)
+      primary    — Slate-900 fill (Yangi sotuv) — asosiy harakat
+      secondary  — White ghost with slate border (Tarix, Sinx, Kassa tarixi)
+      danger     — Outlined red, hover-fill (Kassa yopish)
+      neutral    — Backward-compat alias → secondary
+      ghost      — Backward-compat alias → secondary
     """
-    styles = {
-        "neutral": dict(bg="#334155", fg="white", hover="#1e293b", border="none"),
-        "primary": dict(bg="#1d4ed8", fg="white", hover="#1e40af", border="none"),
-        "danger":  dict(bg="#dc2626", fg="white", hover="#b91c1c", border="none"),
-        "ghost":   dict(bg="#f8fafc", fg="#475569", hover="#e2e8f0", border="1px solid #e2e8f0"),
-    }
-    st = styles.get(kind, styles["neutral"])
+    fs = font(13)
+    r = s(10)
+    px = s(18)
+
+    if kind == "primary":
+        return f"""
+            QPushButton {{
+                background: {_SLATE_900};
+                color: white;
+                font-weight: 700;
+                font-size: {fs}px;
+                border-radius: {r}px;
+                border: 1px solid {_SLATE_900};
+                padding: 0 {px}px;
+            }}
+            QPushButton:hover {{
+                background: #1e293b;
+                border-color: #1e293b;
+            }}
+            QPushButton:pressed {{ background: #0b1220; }}
+            QPushButton:disabled {{
+                background: {_SLATE_100};
+                color: #94a3b8;
+                border-color: {_SLATE_200};
+            }}
+        """
+    if kind == "danger":
+        return f"""
+            QPushButton {{
+                background: white;
+                color: #b91c1c;
+                font-weight: 700;
+                font-size: {fs}px;
+                border-radius: {r}px;
+                border: 1px solid #fecaca;
+                padding: 0 {s(16)}px;
+            }}
+            QPushButton:hover {{
+                background: #fef2f2;
+                color: #991b1b;
+                border-color: #fca5a5;
+            }}
+            QPushButton:pressed {{ background: #fee2e2; }}
+        """
+    # secondary / neutral / ghost
+    return f"""
+        QPushButton {{
+            background: white;
+            color: {_SLATE_700};
+            font-weight: 600;
+            font-size: {fs}px;
+            border-radius: {r}px;
+            border: 1px solid {_SLATE_200};
+            padding: 0 {s(16)}px;
+        }}
+        QPushButton:hover {{
+            background: {_SLATE_50};
+            border: 1px solid #cbd5e1;
+            color: {_SLATE_900};
+        }}
+        QPushButton:pressed {{ background: #e2e8f0; }}
+        QPushButton:disabled {{
+            background: {_SLATE_50};
+            color: #94a3b8;
+        }}
+    """
+
+
+def _tb_btn(label: str, kind: str = "secondary") -> QPushButton:
     b = QPushButton(label)
     b.setFixedHeight(s(44))
-    b.setIconSize(QSize(s(18), s(18)))
-    b.setStyleSheet(_BTN_STYLE.format(
-        bg=st["bg"], fg=st["fg"], hover=st["hover"], border=st["border"],
-        fs=font(13), r=s(10), px=s(16),
-    ))
+    b.setIconSize(QSize(s(16), s(16)))
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setStyleSheet(_btn_style(kind))
     return b
+
+
+class CounterChip(QFrame):
+    """Top-bar counter — label + integrated badge.
+
+    Holatlar:
+      idle (count=0): muted slate badge
+      active (count>0): orange tinted with bold count
+
+    API:
+      .set_count(n)
+      .clicked signal
+    """
+
+    clicked = pyqtSignal()
+
+    def __init__(self, label: str, icon=None, parent=None):
+        super().__init__(parent)
+        self._label_text = label
+        self._count = 0
+        self._build(icon)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(s(44))
+        self.set_count(0)
+
+    def _build(self, icon):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(s(14), 0, s(10), 0)
+        layout.setSpacing(s(10))
+
+        if icon is not None:
+            self._icon = QLabel()
+            self._icon.setFixedSize(s(16), s(16))
+            self._icon.setPixmap(icon.pixmap(s(15), s(15)))
+            self._icon.setStyleSheet("background: transparent; border: none;")
+            layout.addWidget(self._icon)
+        else:
+            self._icon = None
+
+        self._label = QLabel(self._label_text)
+        lf = QFont()
+        lf.setPixelSize(font(13))
+        lf.setWeight(QFont.Weight.DemiBold)
+        self._label.setFont(lf)
+        layout.addWidget(self._label)
+
+        # Counter badge pill
+        self._badge = QLabel("0")
+        bf = QFont()
+        bf.setPixelSize(font(11))
+        bf.setWeight(QFont.Weight.Black)
+        self._badge.setFont(bf)
+        self._badge.setMinimumWidth(s(24))
+        self._badge.setFixedHeight(s(22))
+        self._badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._badge)
+
+    def set_count(self, n: int):
+        self._count = int(n)
+        self._badge.setText(str(self._count))
+        self._refresh_style()
+
+    def _refresh_style(self):
+        if self._count > 0:
+            # Active — orange tint
+            bg = "white"
+            border = "#fdba74"
+            hover_bg = "#fff7ed"
+            label_color = "#c2410c"
+            badge_bg = "#ea580c"
+            badge_fg = "white"
+        else:
+            # Idle — muted slate
+            bg = "white"
+            border = _SLATE_200
+            hover_bg = _SLATE_50
+            label_color = _SLATE_700
+            badge_bg = _SLATE_100
+            badge_fg = _SLATE_500
+
+        self.setStyleSheet(f"""
+            CounterChip {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: {s(10)}px;
+            }}
+            CounterChip:hover {{
+                background: {hover_bg};
+            }}
+        """)
+        self._label.setStyleSheet(
+            f"color: {label_color}; background: transparent; border: none;"
+        )
+        self._badge.setStyleSheet(f"""
+            color: {badge_fg};
+            background: {badge_bg};
+            border-radius: {s(11)}px;
+            border: none;
+            padding: 0 {s(8)}px;
+        """)
+
+    def setText(self, _text: str):
+        """Backward-compat — eski 'Offline: 3' format chaqirilsa raqamni ajratish."""
+        try:
+            n = int(_text.split(":")[-1].strip())
+            self.set_count(n)
+        except (ValueError, AttributeError):
+            pass
+
+    def setIcon(self, _icon):
+        """Backward-compat no-op — ikona constructor'da o'rnatiladi."""
+        pass
+
+    def setStyleSheet(self, sheet: str):
+        super().setStyleSheet(sheet)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -158,7 +817,16 @@ class MainWindow(QMainWindow):
         self.api = api
         self.opening_entry = None
         self.active_cashier = active_cashier   # {"name": ..., "full_name": ..., "pin_hash": ...}
-        self.setWindowTitle("Jazira POS")
+        # Brand window title — config dan dinamik
+        try:
+            _b = (load_config().get("brand_name")
+                  or load_config().get("company") or "").strip()
+            if not _b:
+                self.setWindowTitle("POS")
+            else:
+                self.setWindowTitle(_b if "POS" in _b.upper() else f"{_b} POS")
+        except Exception:
+            self.setWindowTitle("POS")
 
         initialize_db()
 
@@ -214,101 +882,78 @@ class MainWindow(QMainWindow):
         top_bar.setContentsMargins(s(10), s(4), s(10), s(4))
         top_bar.setSpacing(s(8))
 
-        # Brand logo — clean minimal
-        logo_lbl = QLabel("Jazira POS")
-        logo_lbl.setStyleSheet(f"""
-            font-size: {font(20)}px; font-weight: 900;
-            color: #d97706; background: transparent;
-            padding: 0 {s(8)}px;
-        """)
-        top_bar.addWidget(logo_lbl)
+        # ── Brand block ──────────────────────────────
+        self._brand_block = BrandBlock()
+        top_bar.addWidget(self._brand_block)
 
-        # Separator
-        sep1 = QLabel("")
-        sep1.setFixedSize(s(1), s(28))
-        sep1.setStyleSheet("background: #e2e8f0;")
-        top_bar.addWidget(sep1)
+        # Vertikal hairline separator
+        def _hairline():
+            line = QFrame()
+            line.setFixedSize(s(1), s(32))
+            line.setStyleSheet(f"background: {_SLATE_200}; border: none;")
+            return line
+
+        top_bar.addSpacing(s(12))
+        top_bar.addWidget(_hairline())
+        top_bar.addSpacing(s(14))
 
         config = load_config()
         company_name = config.get("company", "")
         cashier = config.get("cashier", config.get("user", ""))
 
-        # Connection status — icon + text
-        self._wifi_icon = QLabel()
-        self._wifi_icon.setFixedSize(s(20), s(20))
-        self._wifi_icon.setPixmap(icon_wifi("#94a3b8").pixmap(s(18), s(18)))
-        top_bar.addWidget(self._wifi_icon)
+        # ── Status pill ──────────────────────────────
+        self._status_pill = StatusPill()
+        top_bar.addWidget(self._status_pill)
 
-        self.status_text = QLabel("Tekshirilmoqda")
-        self.status_text.setStyleSheet(f"""
-            font-weight: 700; color: #94a3b8; font-size: {font(12)}px;
-            background: transparent;
-        """)
-        top_bar.addWidget(self.status_text)
+        top_bar.addSpacing(s(10))
 
-        top_bar.addSpacing(s(12))
+        # ── Company chip ─────────────────────────────
+        self._company_chip = CompanyChip(company_name)
+        top_bar.addWidget(self._company_chip)
 
-        # Company badge — icon + text
-        _comp_icon = QLabel()
-        _comp_icon.setFixedSize(s(20), s(20))
-        _comp_icon.setPixmap(icon_building("#64748b").pixmap(s(18), s(18)))
-        top_bar.addWidget(_comp_icon)
+        top_bar.addSpacing(s(18))
 
-        self.company_badge = QLabel(company_name or "—")
-        self.company_badge.setStyleSheet(f"""
-            font-size: {font(13)}px; font-weight: 700; color: #334155;
-            background: transparent;
-        """)
-        top_bar.addWidget(self.company_badge)
-
-        top_bar.addSpacing(s(12))
-
-        # Cashier badge — icon + text
-        _user_icon = QLabel()
-        _user_icon.setFixedSize(s(20), s(20))
-        _user_icon.setPixmap(icon_user("#0369a1").pixmap(s(18), s(18)))
-        top_bar.addWidget(_user_icon)
-
-        self.cashier_badge = QLabel()
+        # ── Cashier card (avatar + ism + rol chip) ──
+        self._cashier_card = CashierCard()
         self._update_cashier_badge(cashier)
-        top_bar.addWidget(self.cashier_badge)
+        top_bar.addWidget(self._cashier_card)
 
         top_bar.addStretch()
 
         # Tashqi tugmalar
-        self.offline_btn = _tb_btn("Offline: 0", "ghost")
-        self.offline_btn.setIcon(icon_signal("#475569"))
+        # Counter chips (Offline + To'lov kutilmoqda)
+        self.offline_btn = CounterChip("Offline", icon_signal(_SLATE_500))
         self.offline_btn.clicked.connect(self.show_offline_queue)
         top_bar.addWidget(self.offline_btn)
 
         # TZ 4.2 — To'lov kutilmoqda
-        self.pending_btn = _tb_btn("To'lov kutilmoqda: 0", "ghost")
-        self.pending_btn.setIcon(icon_clock())
+        self.pending_btn = CounterChip("To'lov kutilmoqda", icon_clock())
         self.pending_btn.clicked.connect(self.show_pending_orders)
         top_bar.addWidget(self.pending_btn)
+
+        top_bar.addSpacing(s(6))
+        top_bar.addWidget(_hairline())
+        top_bar.addSpacing(s(6))
 
         self.add_sale_btn = _tb_btn("Yangi sotuv", "primary")
         self.add_sale_btn.setIcon(icon_plus())
         self.add_sale_btn.clicked.connect(self.add_new_sale_tab)
         top_bar.addWidget(self.add_sale_btn)
 
-        self.history_btn = _tb_btn("Tarix", "neutral")
-        self.history_btn.setIcon(icon_history())
+        self.history_btn = _tb_btn("Tarix", "secondary")
         self.history_btn.clicked.connect(self.show_history)
         top_bar.addWidget(self.history_btn)
 
-        self.sync_btn = _tb_btn("Sinxronlash", "neutral")
-        self.sync_btn.setIcon(icon_sync())
+        self.sync_btn = _tb_btn("Sinxronlash", "secondary")
         self.sync_btn.clicked.connect(self.start_sync)
         top_bar.addWidget(self.sync_btn)
 
-        self.shifts_btn = _tb_btn("Kassa tarixi", "neutral")
+        self.shifts_btn = _tb_btn("Kassa tarixi", "secondary")
         self.shifts_btn.setIcon(icon_clock())
         self.shifts_btn.clicked.connect(self.show_shifts_history)
         top_bar.addWidget(self.shifts_btn)
 
         self.close_shift_btn = _tb_btn("Kassa yopish", "danger")
-        self.close_shift_btn.setIcon(icon_lock())
         self.close_shift_btn.clicked.connect(self.show_pos_closing)
         top_bar.addWidget(self.close_shift_btn)
 
@@ -324,32 +969,57 @@ class MainWindow(QMainWindow):
         self.item_browser.item_selected.connect(self.add_item_to_active_cart)
         splitter.addWidget(self.item_browser)
 
-        # Sales tabs
+        # Sales tabs — elite minimalist
         self.sales_tabs = QTabWidget()
         self.sales_tabs.setTabsClosable(True)
         self.sales_tabs.setMovable(True)
+        self.sales_tabs.setDocumentMode(True)
+        self.sales_tabs.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.sales_tabs.tabCloseRequested.connect(self.close_sale_tab)
+        # TabBar font — Bold caps + letter-spacing (elite)
+        _tab_font = QFont()
+        _tab_font.setPixelSize(font(11))
+        _tab_font.setWeight(QFont.Weight.Black)
+        _tab_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        self.sales_tabs.tabBar().setFont(_tab_font)
         self.sales_tabs.setStyleSheet(f"""
+            QTabWidget {{
+                background: white;
+                border: none;
+            }}
             QTabWidget::pane {{
-                border: none; background: #ffffff;
-                border-radius: {s(12)}px; margin-top: -1px;
+                border: none;
+                background: white;
+                top: -1px;
+            }}
+            QTabBar {{
+                background: white;
+                border: none;
+                qproperty-drawBase: 0;
             }}
             QTabBar::tab {{
-                background: #f1f5f9; color: #64748b;
-                padding: {s(10)}px {s(20)}px; font-weight: 600;
-                font-size: {font(13)}px;
-                border-radius: {s(10)}px {s(10)}px 0 0;
-                margin-right: {s(4)}px;
-                border: 1px solid #e2e8f0; border-bottom: none;
-                min-width: {s(90)}px;
+                background: transparent;
+                color: {_SLATE_500};
+                padding: {s(10)}px {s(20)}px;
+                margin: 0 {s(2)}px;
+                border: none;
+                border-bottom: 2px solid transparent;
+                min-width: {s(80)}px;
+                outline: none;
+            }}
+            QTabBar::tab:hover:!selected {{
+                color: {_SLATE_900};
+                border-bottom: 2px solid {_SLATE_200};
             }}
             QTabBar::tab:selected {{
-                background: #ffffff; color: #1d4ed8;
-                border-color: #bfdbfe; border-bottom: 3px solid #3b82f6;
-                font-weight: 700;
+                color: {_SLATE_900};
+                border-bottom: 2px solid {_GOLD};
+                background: transparent;
             }}
-            QTabBar::tab:hover:!selected {{ background: #e8f0fe; color: #1d4ed8; }}
+            QTabBar::scroller {{ width: 0px; }}
         """)
+        # Default tab close tugmasi ('×') o'rniga custom elite tugmaslarni
+        # `addTab` da o'rnatamiz (setTabButton).
 
         splitter.addWidget(self.sales_tabs)
         splitter.setSizes([s(600), s(500)])
@@ -404,41 +1074,32 @@ class MainWindow(QMainWindow):
 
     # ── Company / Cashier badge ──────────────────────
     def _update_company_badge(self, company: str = "", pos_profile: str = ""):
-        display = company if company else "—"
-        self.company_badge.setText(display)
-        self.company_badge.setStyleSheet(f"""
-            font-size: {font(13)}px; font-weight: 700; color: #334155;
-            background: transparent;
-        """)
+        if hasattr(self, "_company_chip"):
+            self._company_chip.set_company(company or "—")
 
     def _update_cashier_badge(self, cashier: str = ""):
         # active_cashier mavjud bo'lsa — uning full_name + role ni ko'rsat
         role = ""
         if self.active_cashier:
-            display = self.active_cashier.get("full_name") or self.active_cashier.get("name", "")
+            display = (
+                self.active_cashier.get("full_name")
+                or self.active_cashier.get("name", "")
+            )
             role = self.active_cashier.get("role") or "Kassir"
         elif cashier:
             # Fallback: ERPNext foydalanuvchi nomi (kassirlar yo'q holatda)
-            display = cashier.split('@')[0].replace('.', ' ').replace('_', ' ').title()
+            display = (
+                cashier.split("@")[0]
+                .replace(".", " ")
+                .replace("_", " ")
+                .title()
+            )
             role = "Kassir"
         else:
             display = "—"
 
-        if role:
-            self.cashier_badge.setText(f"{display}  ·  {role}")
-        else:
-            self.cashier_badge.setText(display)
-
-        # Rol asosida rang: Kassir=ko'k, Ofitsant=binafsha
-        if role == "Ofitsant":
-            color = "#7c3aed"  # binafsha
-        else:
-            color = "#0369a1"  # ko'k
-
-        self.cashier_badge.setStyleSheet(f"""
-            font-size: {font(13)}px; font-weight: 800; color: {color};
-            background: transparent;
-        """)
+        if hasattr(self, "_cashier_card"):
+            self._cashier_card.set_cashier(display, role)
 
     def get_active_cashier_name(self) -> str:
         """Checkout uchun faol kassir ismini qaytarish."""
@@ -544,28 +1205,14 @@ class MainWindow(QMainWindow):
             self._refresh_pending_count_silent()
         self._last_conn_state = state
 
-        # Top-bar wifi/text indicator
-        if state == STATE_ONLINE:
-            self._wifi_icon.setPixmap(icon_wifi("#10b981").pixmap(s(18), s(18)))
-            self.status_text.setText("Online")
-            self.status_text.setStyleSheet(f"""
-                font-weight: 700; color: #10b981; font-size: {font(12)}px;
-                background: transparent;
-            """)
-        elif state == STATE_OFFLINE:
-            self._wifi_icon.setPixmap(icon_wifi("#ef4444").pixmap(s(18), s(18)))
-            self.status_text.setText("Offline")
-            self.status_text.setStyleSheet(f"""
-                font-weight: 700; color: #ef4444; font-size: {font(12)}px;
-                background: transparent;
-            """)
-        else:  # checking
-            self._wifi_icon.setPixmap(icon_wifi("#94a3b8").pixmap(s(18), s(18)))
-            self.status_text.setText("Tekshirilmoqda")
-            self.status_text.setStyleSheet(f"""
-                font-weight: 700; color: #94a3b8; font-size: {font(12)}px;
-                background: transparent;
-            """)
+        # Top-bar status pill (elite)
+        if hasattr(self, "_status_pill"):
+            if state == STATE_ONLINE:
+                self._status_pill.set_state("online")
+            elif state == STATE_OFFLINE:
+                self._status_pill.set_state("offline")
+            else:
+                self._status_pill.set_state("checking")
 
         # Ofitsant rolida — offline bo'lsa block overlay (TZ 4.7.3)
         if self.is_waiter() and hasattr(self, "offline_overlay"):
@@ -621,19 +1268,8 @@ class MainWindow(QMainWindow):
     def _update_offline_queue_count(self):
         try:
             count = PendingInvoice.select().where(PendingInvoice.status == "Pending").count()
-            self.offline_btn.setText(f"Offline: {count}")
-            if count > 0:
-                self.offline_btn.setStyleSheet(f"""
-                    QPushButton {{ background: #fff7ed; color: #ea580c; font-weight: 700;
-                        font-size: {font(13)}px; border-radius: {s(10)}px;
-                        border: 2px solid #f97316; padding: 0 {s(16)}px; }}
-                    QPushButton:hover {{ background: #ffedd5; }}
-                """)
-            else:
-                self.offline_btn.setStyleSheet(_BTN_STYLE.format(
-                    bg="#f8fafc", fg="#475569", hover="#e2e8f0",
-                    border="1px solid #e2e8f0", fs=font(13), r=s(10), px=s(16),
-                ))
+            if hasattr(self, "offline_btn") and hasattr(self.offline_btn, "set_count"):
+                self.offline_btn.set_count(count)
         except Exception as e:
             logger.debug("Offline queue count xatosi: %s", e)
 
@@ -658,7 +1294,39 @@ class MainWindow(QMainWindow):
         new_cart.table_pick_requested.connect(lambda: self.open_table_picker(new_cart))
         new_cart.set_role(self.get_active_cashier_role())               # TZ 4.3
         new_cart.apply_settings()
-        tab_index = self.sales_tabs.addTab(new_cart, f"Sotuv {tab_count + 1}")
+        tab_index = self.sales_tabs.addTab(
+            new_cart, f"SOTUV {tab_count + 1}"
+        )
+        # Elite custom close tugmasi — slate-400 'x', hover red tint
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(s(28), s(28))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {_SLATE_400};
+                font-size: {font(13)}px;
+                font-weight: 700;
+                border: 1px solid transparent;
+                border-radius: {s(14)}px;
+                outline: none;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background: #fef2f2;
+                color: #b91c1c;
+                border: 1px solid #fecaca;
+            }}
+            QPushButton:pressed {{ background: #fee2e2; }}
+        """)
+        close_btn.clicked.connect(
+            lambda _, w=new_cart: self.close_sale_tab(self.sales_tabs.indexOf(w))
+        )
+        from PyQt6.QtWidgets import QTabBar as _QTabBar
+        self.sales_tabs.tabBar().setTabButton(
+            tab_index, _QTabBar.ButtonPosition.RightSide, close_btn,
+        )
         self.sales_tabs.setCurrentIndex(tab_index)
 
     def close_sale_tab(self, index: int):
@@ -833,20 +1501,8 @@ class MainWindow(QMainWindow):
 
     def _on_pending_count_changed(self, count: int):
         """Top-bar tugmasini yangilash."""
-        if hasattr(self, "pending_btn"):
-            self.pending_btn.setText(f"To'lov kutilmoqda: {count}")
-            if count > 0:
-                self.pending_btn.setStyleSheet(f"""
-                    QPushButton {{ background: #fff7ed; color: #c2410c; font-weight: 700;
-                        font-size: {font(13)}px; border-radius: {s(10)}px;
-                        border: 2px solid #fdba74; padding: 0 {s(16)}px; }}
-                    QPushButton:hover {{ background: #ffedd5; }}
-                """)
-            else:
-                self.pending_btn.setStyleSheet(_BTN_STYLE.format(
-                    bg="#f8fafc", fg="#475569", hover="#e2e8f0",
-                    border="1px solid #e2e8f0", fs=font(13), r=s(10), px=s(16),
-                ))
+        if hasattr(self, "pending_btn") and hasattr(self.pending_btn, "set_count"):
+            self.pending_btn.set_count(int(count))
 
     # ── History / Shifts ─────────────────────────────
     def show_shifts_history(self):
@@ -885,7 +1541,6 @@ class MainWindow(QMainWindow):
             return
         self.sync_btn.setEnabled(False)
         self.sync_btn.setText("Sinxronizatsiya...")
-        self.sync_btn.setIcon(icon_loading())
         self._sync_spinner.start()
         self._auto_sync = False
         self.sync_worker = SyncWorker(self.api)
@@ -899,11 +1554,25 @@ class MainWindow(QMainWindow):
     def on_sync_finished(self, success: bool, message: str):
         self.sync_btn.setEnabled(True)
         self.sync_btn.setText("Sinxronlash")
-        self.sync_btn.setIcon(icon_sync())
         self._sync_spinner.stop()
         cfg = load_config()
         self._update_company_badge(cfg.get("company", ""), cfg.get("pos_profile", ""))
         self._update_cashier_badge(cfg.get("cashier", cfg.get("user", "")))
+        # POS Profile dan brand_name yangilangan bo'lishi mumkin — top bar
+        # brand'ni qayta render qilamiz
+        if hasattr(self, "_brand_block"):
+            self._brand_block.refresh()
+        # Window title ham brand'ga moslashtirish (foydalanuvchiga clarity)
+        try:
+            brand = (cfg.get("brand_name") or cfg.get("company") or "").strip()
+            if not brand:
+                self.setWindowTitle("POS")
+            else:
+                self.setWindowTitle(
+                    brand if "POS" in brand.upper() else f"{brand} POS"
+                )
+        except Exception:
+            pass
         self._apply_pos_settings(cfg)
         if success:
             # Sidebar kategoriyalarini va itemlarni yangilash

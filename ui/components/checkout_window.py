@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QWidget, QFrame, QGridLayout, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtGui import QDoubleValidator
+from PyQt6.QtGui import QDoubleValidator, QFont
 from core.api import FrappeAPI
 from core.config import load_config
 from core.constants import ORDER_TYPE_MAP
@@ -19,6 +19,28 @@ from ui.components.dialogs import ClickableLineEdit
 from ui.scale import s, font
 
 logger = get_logger(__name__)
+
+
+# ── Elite palette ────────────────────────────────────────
+_GOLD = "#c89968"
+_GOLD_LIGHT = "#e6c693"
+_GOLD_DEEP = "#a07a44"
+_SLATE_900 = "#0f172a"
+_SLATE_800 = "#1e293b"
+_SLATE_700 = "#334155"
+_SLATE_500 = "#64748b"
+_SLATE_400 = "#94a3b8"
+_SLATE_300 = "#cbd5e1"
+_SLATE_200 = "#e2e8f0"
+_SLATE_100 = "#f1f5f9"
+_SLATE_50 = "#f8fafc"
+_EMERALD_600 = "#059669"
+_EMERALD_700 = "#047857"
+_EMERALD_50 = "#ecfdf5"
+_EMERALD_200 = "#a7f3d0"
+_RED_700 = "#b91c1c"
+_RED_200 = "#fecaca"
+_RED_50 = "#fef2f2"
 
 
 class CheckoutWorker(QThread):
@@ -176,57 +198,165 @@ class CheckoutWindow(QDialog):
     def init_ui(self):
         self.setWindowTitle("To'lov")
         self.setMinimumSize(s(960), s(680))
-        self.resize(s(1100), s(820))
+        self.resize(s(1100), s(780))
         self.setModal(True)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet("background: white;")
 
-        main_h_layout = QHBoxLayout(self)
-        main_h_layout.setContentsMargins(s(28), s(28), s(28), s(28))
-        main_h_layout.setSpacing(s(24))
+        root = QVBoxLayout(self)
+        root.setContentsMargins(s(28), s(16), s(28), s(16))
+        root.setSpacing(s(10))
+
+        # ── Header (caps title + close) ───────────────
+        header = QHBoxLayout()
+        header.setSpacing(s(12))
+
+        # Title block — sarlavha + subtitle (gold accent)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(s(3))
+
+        title = QLabel("TO'LOV")
+        title.setFrameShape(QFrame.Shape.NoFrame)
+        title.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        _tf = QFont()
+        _tf.setPixelSize(font(22))
+        _tf.setWeight(QFont.Weight.Black)
+        _tf.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 4)
+        title.setFont(_tf)
+        title.setStyleSheet(
+            f"color: {_SLATE_900}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
+        )
+        title_block.addWidget(title)
+
+        subtitle = QLabel("Buyurtmani yakunlash uchun summa kiriting")
+        subtitle.setFrameShape(QFrame.Shape.NoFrame)
+        _stf = QFont()
+        _stf.setPixelSize(font(11))
+        _stf.setWeight(QFont.Weight.Medium)
+        subtitle.setFont(_stf)
+        subtitle.setStyleSheet(
+            f"color: {_SLATE_500}; background: transparent;"
+            f" border: none; outline: none;"
+        )
+        title_block.addWidget(subtitle)
+
+        header.addLayout(title_block)
+        header.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(s(40), s(40))
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_SLATE_50};
+                color: {_SLATE_700};
+                font-weight: 700;
+                font-size: {font(16)}px;
+                border-radius: {s(10)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: white;
+                color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_100}; }}
+        """)
+        close_btn.clicked.connect(self.reject)
+        header.addWidget(close_btn)
+        root.addLayout(header)
+
+        # Hairline + tag aksent (oltin)
+        sep = QFrame()
+        sep.setFixedHeight(2)
+        sep.setStyleSheet(
+            f"background: qlineargradient(x1:0,y1:0,x2:1,y2:0,"
+            f" stop:0 {_GOLD}, stop:0.15 {_SLATE_100}, stop:1 {_SLATE_100});"
+            f" border: none;"
+        )
+        root.addWidget(sep)
+
+        main_h_layout = QHBoxLayout()
+        main_h_layout.setContentsMargins(0, s(8), 0, 0)
+        main_h_layout.setSpacing(s(20))
+        root.addLayout(main_h_layout)
 
         # ── LEFT PANEL ───────────────────────────────────────
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(s(16))
+        left_layout.setSpacing(s(10))
 
-        # Jami summa kartasi
+        # Jami summa kartasi — slate-900 + gold accent border (kompakt)
         total_card = QFrame()
-        total_card.setStyleSheet(f"background: #0f172a; border-radius: {s(14)}px;")
+        total_card.setStyleSheet(f"""
+            QFrame {{
+                background: {_SLATE_900};
+                border-radius: {s(12)}px;
+                border: 1px solid {_SLATE_800};
+                border-left: 4px solid {_GOLD};
+            }}
+        """)
         total_layout = QVBoxLayout(total_card)
-        total_layout.setContentsMargins(s(24), s(20), s(24), s(20))
-        total_layout.setSpacing(s(6))
+        total_layout.setContentsMargins(s(24), s(14), s(24), s(14))
+        total_layout.setSpacing(s(4))
 
         lbl_title = QLabel("JAMI TO'LOV SUMMASI")
+        lbl_title.setFrameShape(QFrame.Shape.NoFrame)
+        _lt_font = QFont()
+        _lt_font.setPixelSize(font(10))
+        _lt_font.setWeight(QFont.Weight.Black)
+        _lt_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2.5)
+        lbl_title.setFont(_lt_font)
         lbl_title.setStyleSheet(
-            f"color: #64748b; font-size: {font(11)}px; font-weight: 700; letter-spacing: 2px;"
+            f"color: {_GOLD_LIGHT}; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
         )
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_layout.addWidget(lbl_title)
 
         self.lbl_total = QLabel(f"{self.total_amount:,.0f} UZS".replace(",", " "))
+        self.lbl_total.setFrameShape(QFrame.Shape.NoFrame)
+        _tot_font = QFont()
+        _tot_font.setPixelSize(font(30))
+        _tot_font.setWeight(QFont.Weight.Black)
+        _tot_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.5)
+        self.lbl_total.setFont(_tot_font)
         self.lbl_total.setStyleSheet(
-            f"color: #f8fafc; font-size: {font(38)}px; font-weight: 900;"
+            f"color: white; background: transparent;"
+            f" border: none; outline: none; padding: 0; margin: 0;"
         )
         self.lbl_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total_layout.addWidget(self.lbl_total)
         left_layout.addWidget(total_card)
 
-        # Qolgan / qaytim holati — jami summa ostida
+        # Qolgan / qaytim holati — jami summa ostida (kompakt)
         self.lbl_remaining = QLabel("Yuklanmoqda...")
-        self.lbl_remaining.setFixedHeight(s(52))
+        self.lbl_remaining.setFrameShape(QFrame.Shape.NoFrame)
+        self.lbl_remaining.setFixedHeight(s(40))
         self.lbl_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_remaining.setStyleSheet(
-            f"font-size: {font(20)}px; font-weight: 800; color: #16a34a; "
-            f"background: #f0fdf4; border-radius: {s(10)}px; border: 2px solid #bbf7d0;"
-        )
+        _rem_font = QFont()
+        _rem_font.setPixelSize(font(13))
+        _rem_font.setWeight(QFont.Weight.Black)
+        _rem_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.5)
+        self.lbl_remaining.setFont(_rem_font)
+        # Boshlang'ich stilini _update_remaining_label belgilab beradi
         left_layout.addWidget(self.lbl_remaining)
 
         # To'lov turlari sarlavhasi
         pay_label = QLabel("TO'LOV TURLARI")
+        pay_label.setFrameShape(QFrame.Shape.NoFrame)
+        _pl_font = QFont()
+        _pl_font.setPixelSize(font(10))
+        _pl_font.setWeight(QFont.Weight.Black)
+        _pl_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        pay_label.setFont(_pl_font)
         pay_label.setStyleSheet(
-            f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+            f"color: {_SLATE_400}; background: transparent;"
+            f" border: none; outline: none;"
         )
         left_layout.addWidget(pay_label)
 
@@ -237,7 +367,7 @@ class CheckoutWindow(QDialog):
         scroll_content = QWidget()
         scroll_content.setStyleSheet("background: transparent;")
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setSpacing(s(12))
+        scroll_layout.setSpacing(s(10))
         scroll_layout.setContentsMargins(0, 0, 0, 0)
 
         config = load_config()
@@ -245,37 +375,44 @@ class CheckoutWindow(QDialog):
         self.primary_input = None
 
         self._active_css = (
-            f"padding: {s(12)}px {s(18)}px; font-size: {font(22)}px; font-weight: 800; "
-            f"border: 2.5px solid #3b82f6; border-radius: {s(12)}px; "
-            f"background: #eff6ff; color: #1e293b;"
+            f"padding: {s(8)}px {s(14)}px; font-size: {font(16)}px; font-weight: 800; "
+            f"border: 2px solid {_GOLD}; border-radius: {s(8)}px; "
+            f"background: #fff7ed; color: {_SLATE_900}; outline: none;"
         )
         self._normal_css = (
-            f"padding: {s(12)}px {s(18)}px; font-size: {font(22)}px; font-weight: 800; "
-            f"border: 1.5px solid #e2e8f0; border-radius: {s(12)}px; "
-            f"background: white; color: #1e293b;"
+            f"padding: {s(8)}px {s(14)}px; font-size: {font(16)}px; font-weight: 800; "
+            f"border: 1px solid {_SLATE_200}; border-radius: {s(8)}px; "
+            f"background: white; color: {_SLATE_900}; outline: none;"
         )
 
         for idx, mode in enumerate(payment_methods):
             row_frame = QFrame()
             row_frame.setStyleSheet(
-                f"QFrame {{ background: {'#f8fafc' if idx % 2 == 0 else 'white'}; "
-                f"border-radius: {s(10)}px; }}"
+                f"QFrame {{ background: transparent;"
+                f" border-radius: {s(8)}px; border: none; }}"
             )
             row = QHBoxLayout(row_frame)
-            row.setContentsMargins(s(14), s(8), s(14), s(8))
-            row.setSpacing(s(12))
+            row.setContentsMargins(s(12), s(6), s(12), s(6))
+            row.setSpacing(s(10))
 
             lbl = QLabel(mode)
+            lbl.setFrameShape(QFrame.Shape.NoFrame)
+            lbl_font = QFont()
+            lbl_font.setPixelSize(font(15))
+            lbl_font.setWeight(QFont.Weight.Bold)
+            lbl_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.3)
+            lbl.setFont(lbl_font)
             lbl.setStyleSheet(
-                f"font-size: {font(16)}px; font-weight: 700; color: #334155; background: transparent;"
+                f"color: {_SLATE_900};"
+                f" background: transparent; border: none; outline: none;"
             )
             lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
             input_field = ClickableLineEdit()
             input_field.setValidator(QDoubleValidator(0.0, 999_999_999.0, 2))
             input_field.setPlaceholderText("0")
-            input_field.setMinimumWidth(s(220))
-            input_field.setFixedHeight(s(60))
+            input_field.setMinimumWidth(s(200))
+            input_field.setFixedHeight(s(44))
             input_field.setAlignment(Qt.AlignmentFlag.AlignRight)
             input_field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
@@ -305,26 +442,54 @@ class CheckoutWindow(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(s(14))
 
-        btn_cancel = QPushButton("✕  Bekor")
-        btn_cancel.setFixedHeight(s(64))
+        btn_cancel = QPushButton("BEKOR")
+        btn_cancel.setFixedHeight(s(54))
+        btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cancel.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn_cancel.setStyleSheet(f"""
-            QPushButton {{ background: #f1f5f9; color: #64748b;
-                font-weight: 700; font-size: {font(15)}px;
-                border-radius: {s(14)}px; border: none; }}
-            QPushButton:hover {{ background: #e2e8f0; color: #334155; }}
-            QPushButton:pressed {{ background: #cbd5e1; }}
+            QPushButton {{
+                background: {_SLATE_100};
+                color: {_SLATE_700};
+                font-weight: 800;
+                font-size: {font(14)}px;
+                letter-spacing: 2px;
+                border-radius: {s(12)}px;
+                border: 1px solid {_SLATE_200};
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: {_SLATE_200}; color: {_SLATE_900};
+                border-color: {_SLATE_300};
+            }}
+            QPushButton:pressed {{ background: {_SLATE_300}; }}
         """)
         btn_cancel.clicked.connect(self.reject)
 
-        self.btn_confirm = QPushButton("✓  TO'LOV QILISH")
-        self.btn_confirm.setFixedHeight(s(64))
+        self.btn_confirm = QPushButton("TO'LOV QILISH")
+        self.btn_confirm.setFixedHeight(s(54))
+        self.btn_confirm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_confirm.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_confirm.setStyleSheet(f"""
-            QPushButton {{ background: #16a34a;
-                color: white; font-weight: 900; font-size: {font(17)}px;
-                border-radius: {s(14)}px; border: none; }}
-            QPushButton:hover {{ background: #15803d; }}
-            QPushButton:pressed {{ background: #166534; }}
-            QPushButton:disabled {{ background: #d1fae5; color: #86efac; }}
+            QPushButton {{
+                background: {_EMERALD_600};
+                color: white;
+                font-weight: 900;
+                font-size: {font(16)}px;
+                letter-spacing: 2px;
+                border-radius: {s(12)}px;
+                border: 1px solid {_EMERALD_600};
+                outline: none;
+            }}
+            QPushButton:hover {{
+                background: {_EMERALD_700};
+                border-color: {_EMERALD_700};
+            }}
+            QPushButton:pressed {{ background: #065f46; }}
+            QPushButton:disabled {{
+                background: {_SLATE_100};
+                color: {_SLATE_400};
+                border-color: {_SLATE_200};
+            }}
         """)
         self.btn_confirm.clicked.connect(self._process_checkout)
 
@@ -336,14 +501,25 @@ class CheckoutWindow(QDialog):
 
         # ── RIGHT PANEL — Numpad + Tezkor summalar ─────────────
         right_widget = QWidget()
-        right_widget.setStyleSheet(f"background: #f8fafc; border-radius: {s(16)}px;")
+        right_widget.setStyleSheet(
+            f"background: {_SLATE_50};"
+            f" border-radius: {s(14)}px;"
+            f" border: 1px solid {_SLATE_200};"
+        )
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(s(20), s(20), s(20), s(20))
         right_layout.setSpacing(s(14))
 
         numpad_lbl = QLabel("MIQDOR KIRITING")
+        numpad_lbl.setFrameShape(QFrame.Shape.NoFrame)
+        _np_font = QFont()
+        _np_font.setPixelSize(font(10))
+        _np_font.setWeight(QFont.Weight.Black)
+        _np_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 2)
+        numpad_lbl.setFont(_np_font)
         numpad_lbl.setStyleSheet(
-            f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+            f"color: {_SLATE_400}; background: transparent;"
+            f" border: none; outline: none;"
         )
         right_layout.addWidget(numpad_lbl)
 
@@ -353,8 +529,11 @@ class CheckoutWindow(QDialog):
 
         # Tezkor summalar
         quick_lbl = QLabel("TEZKOR SUMMA")
+        quick_lbl.setFrameShape(QFrame.Shape.NoFrame)
+        quick_lbl.setFont(_np_font)
         quick_lbl.setStyleSheet(
-            f"font-size: {font(11)}px; font-weight: 800; color: #94a3b8; letter-spacing: 2px;"
+            f"color: {_SLATE_400}; background: transparent;"
+            f" border: none; outline: none;"
         )
         right_layout.addWidget(quick_lbl)
 
@@ -365,25 +544,46 @@ class CheckoutWindow(QDialog):
         for amt in amounts:
             display = f"{amt:,}".replace(",", " ") if isinstance(amt, int) else "MAX ↑"
             btn = QPushButton(display)
-            btn.setFixedHeight(s(52))
+            btn.setFixedHeight(s(54))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             if amt == "MAX":
+                # MAX — gold accent (asosiy tezkor)
                 btn.setStyleSheet(f"""
-                    QPushButton {{ background: #1d4ed8; color: white;
-                        font-weight: 800; font-size: {font(13)}px;
-                        border-radius: {s(10)}px; border: none; }}
-                    QPushButton:hover {{ background: #1e40af; }}
-                    QPushButton:pressed {{ background: #1e3a8a; }}
+                    QPushButton {{
+                        background: {_GOLD};
+                        color: white;
+                        font-weight: 800;
+                        font-size: {font(13)}px;
+                        letter-spacing: 1.5px;
+                        border-radius: {s(10)}px;
+                        border: 1px solid {_GOLD};
+                        outline: none;
+                    }}
+                    QPushButton:hover {{
+                        background: {_GOLD_DEEP};
+                        border-color: {_GOLD_DEEP};
+                    }}
+                    QPushButton:pressed {{ background: #855e30; }}
                 """)
                 btn.clicked.connect(self._fill_max)
             else:
                 btn.setStyleSheet(f"""
-                    QPushButton {{ background: white; color: #1e293b;
-                        font-weight: 700; font-size: {font(13)}px;
+                    QPushButton {{
+                        background: white;
+                        color: {_SLATE_900};
+                        font-weight: 700;
+                        font-size: {font(13)}px;
                         border-radius: {s(10)}px;
-                        border: 1.5px solid #e2e8f0; }}
-                    QPushButton:hover {{ background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }}
-                    QPushButton:pressed {{ background: #dbeafe; }}
+                        border: 1px solid {_SLATE_200};
+                        outline: none;
+                    }}
+                    QPushButton:hover {{
+                        background: {_SLATE_50};
+                        border-color: {_SLATE_300};
+                    }}
+                    QPushButton:pressed {{ background: {_SLATE_100}; }}
                 """)
                 btn.clicked.connect(lambda checked, a=amt: self._add_quick_amount(a))
             quick_layout.addWidget(btn, r, c)
@@ -472,26 +672,35 @@ class CheckoutWindow(QDialog):
                 pass
 
         remaining = self.total_amount - total_paid
-        fs = f"font-size: {font(20)}px; font-weight: 800; border-radius: {s(10)}px; border: 2px solid"
+        # Border yo'q (sof matn) — faqat QAYTIM holatida alert chiqadi.
+        # Bu vizual shovqinni kamaytiradi va payment'ga ko'proq joy qoldiradi.
+        plain_base = (
+            f"border-radius: {s(8)}px;"
+            f" border: none; outline: none;"
+            f" padding: 0; margin: 0;"
+            f" background: transparent;"
+        )
 
         if remaining > 0:
-            text = f"Qolgan: {remaining:,.0f} UZS".replace(",", " ")
+            text = f"QOLGAN  ·  {remaining:,.0f} UZS".replace(",", " ")
             self.lbl_remaining.setText(text)
             self.lbl_remaining.setStyleSheet(
-                f"{fs} #fca5a5; color: #dc2626; background: #fff1f2;"
+                f"{plain_base} color: {_RED_700};"
             )
             self.btn_confirm.setEnabled(False)
         elif remaining == 0:
-            self.lbl_remaining.setText("✓  To'lov to'liq yopildi")
+            self.lbl_remaining.setText("✓  TO'LOV TO'LIQ YOPILDI")
             self.lbl_remaining.setStyleSheet(
-                f"{fs} #86efac; color: #16a34a; background: #f0fdf4;"
+                f"{plain_base} color: {_EMERALD_700};"
             )
             self.btn_confirm.setEnabled(True)
         else:
+            # QAYTIM — borderless gold text (xuddi boshqa holatlar kabi sof)
             qaytim = abs(remaining)
-            self.lbl_remaining.setText(f"QAYTIM: {qaytim:,.0f} UZS".replace(",", " "))
+            text = f"QAYTIM  ·  {qaytim:,.0f} UZS".replace(",", " ")
+            self.lbl_remaining.setText(text)
             self.lbl_remaining.setStyleSheet(
-                f"{fs} #93c5fd; color: #1d4ed8; background: #eff6ff;"
+                f"{plain_base} color: {_GOLD_DEEP};"
             )
             self.btn_confirm.setEnabled(True)
 
