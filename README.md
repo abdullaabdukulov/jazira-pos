@@ -124,13 +124,17 @@ Birinchi marta ishga tushirilganda:
 source venv/bin/activate
 pip install pyinstaller
 
-pyinstaller --noconfirm --onefile --windowed \
+pyinstaller --noconfirm --clean --onefile --windowed \
   --name "JaziraPOS" \
   --add-data "config.example.json:." \
   --hidden-import="PyQt6.QtCore" \
   --hidden-import="PyQt6.QtGui" \
   --hidden-import="PyQt6.QtWidgets" \
   --hidden-import="peewee" \
+  --hidden-import="socketio" \
+  --hidden-import="engineio" \
+  --collect-submodules="socketio" \
+  --collect-submodules="engineio" \
   main.py
 ```
 
@@ -140,14 +144,17 @@ pyinstaller --noconfirm --onefile --windowed \
 venv\Scripts\activate
 pip install pyinstaller
 
-pyinstaller --noconfirm --onefile --windowed ^
+pyinstaller --noconfirm --clean --onefile --windowed ^
   --name "JaziraPOS" ^
   --add-data "config.example.json;." ^
-  --hidden-import="PyQt6.QtCore" ^
-  --hidden-import="PyQt6.QtGui" ^
-  --hidden-import="PyQt6.QtWidgets" ^
-  --hidden-import="peewee" ^
-  --hidden-import="win32print" ^
+  --hidden-import "PyQt6.QtCore" ^
+  --hidden-import "PyQt6.QtGui" ^
+  --hidden-import "PyQt6.QtWidgets" ^
+  --hidden-import "peewee" ^
+  --hidden-import "socketio" ^
+  --hidden-import "engineio" ^
+  --collect-submodules "socketio" ^
+  --collect-submodules "engineio" ^
   main.py
 ```
 
