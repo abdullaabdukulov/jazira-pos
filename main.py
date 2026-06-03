@@ -40,6 +40,7 @@ sys.excepthook = _excepthook
 
 
 def main():
+    # Auto-update sinovi uchun zararsiz o'zgarish (v1.0.4)
     app = QApplication(sys.argv)
     app.setStyleSheet(get_global_style())
 
