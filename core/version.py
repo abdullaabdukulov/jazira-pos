@@ -8,7 +8,7 @@ bu holatda auto-update tekshiruvi o'tkazilmaydi (har doim "yangi" deb hisoblanma
 __version__ = "0.0.0"
 
 # GitHub repo (owner/repo) — release'lar shu yerdan olinadi
-GITHUB_REPO = "sar552/jazira-pos"
+GITHUB_REPO = "dividendgroupllc/jazira-pos"
 
 # Release asset nomi (workflow shu nom bilan .exe yuklaydi)
 ASSET_NAME = "JaziraPOS.exe"
