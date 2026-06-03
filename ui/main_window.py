@@ -33,6 +33,8 @@ from ui.components.loading import InlineSpinner
 from ui.components.offline_block_overlay import OfflineBlockOverlay
 from core.realtime import RealtimeClient
 from core.connection_monitor import ConnectionMonitor, STATE_ONLINE, STATE_OFFLINE
+from core import updater
+from core.version import __version__
 from ui.icons import (
     icon_plus, icon_clock, icon_signal, icon_building,
 )
@@ -1144,6 +1146,84 @@ class MainWindow(QMainWindow):
         self._start_realtime_and_monitor()
 
         self._check_pos_opening()
+
+        # ── Auto-update — yangi versiyani tekshirish (faqat .exe da) ──
+        self._check_for_updates()
+
+    # ── Auto-update ──────────────────────────────────
+    def _check_for_updates(self):
+        """Fon thread'da GitHub'dan yangi versiyani tekshiradi.
+
+        Manbadan (python main.py) ishlaganda o'tkazib yuboriladi.
+        """
+        if not updater.is_frozen():
+            logger.debug("Manbadan ishlamoqda — update tekshiruvi o'tkazib yuborildi")
+            return
+        try:
+            self._update_check_worker = updater.UpdateCheckWorker()
+            self._update_check_worker.update_available.connect(self._on_update_available)
+            self._update_check_worker.start()
+        except Exception as e:
+            logger.error("Update tekshiruvini boshlash xatosi: %s", e)
+
+    def _on_update_available(self, version: str, download_url: str, notes: str):
+        notes_short = (notes or "").strip()
+        if len(notes_short) > 400:
+            notes_short = notes_short[:400] + "…"
+        msg = (
+            f"Yangi versiya mavjud: {version}\n"
+            f"Joriy versiya: {__version__}\n\n"
+            f"Hozir yangilansinmi? Ilova yuklab olib, qayta ishga tushadi."
+        )
+        if notes_short:
+            msg += f"\n\nO'zgarishlar:\n{notes_short}"
+
+        dlg = ConfirmDialog(
+            self, "Yangilanish mavjud", msg,
+            icon="⬆️", yes_text="Yangilash", no_text="Keyinroq",
+            yes_color="#16a34a",
+        )
+        dlg.exec()
+        if not dlg.result_accepted:
+            return
+
+        self.status_label.setText("Yangilanish yuklanmoqda... 0%")
+        self._update_dl_worker = updater.UpdateDownloadWorker(download_url)
+        self._update_dl_worker.progress.connect(self._on_update_progress)
+        self._update_dl_worker.finished_ok.connect(self._on_update_downloaded)
+        self._update_dl_worker.failed.connect(self._on_update_download_failed)
+        self._update_dl_worker.start()
+
+    def _on_update_progress(self, percent: int):
+        self.status_label.setText(f"Yangilanish yuklanmoqda... {percent}%")
+
+    def _on_update_downloaded(self, new_exe_path: str):
+        InfoDialog(
+            self, "Yangilanishga tayyor",
+            "Yangi versiya yuklandi. Ilova hozir qayta ishga tushadi.",
+            kind="success",
+        ).exec()
+        try:
+            updater.apply_update_and_restart(new_exe_path)
+        except Exception as e:
+            logger.error("Update qo'llash xatosi: %s", e)
+            InfoDialog(
+                self, "Xatolik",
+                f"Yangilanishni o'rnatib bo'lmadi: {e}",
+                kind="error",
+            ).exec()
+            return
+        # Yangi jarayon ishga tushdi — joriysini yopamiz
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
+
+    def _on_update_download_failed(self, error: str):
+        self.status_label.setText("Tayyor")
+        InfoDialog(
+            self, "Yangilanish xatosi",
+            f"Yangi versiyani yuklab bo'lmadi: {error}",
+            kind="error",
+        ).exec()
 
     # ── Realtime + connection monitor (Phase 2) ──────
     def _start_realtime_and_monitor(self):
