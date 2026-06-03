@@ -285,3 +285,4 @@ python main.py
 rm pos_data.db
 # Ilovani qayta ishga tushiring — baza qaytadan yaratiladi
 ```
+# jazira-pos
