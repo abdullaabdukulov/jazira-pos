@@ -37,9 +37,9 @@ jobs:
           sed -i "s/^__version__ = .*/__version__ = \"$VERSION\"/" core/version.py
           cat core/version.py
 
-      - name: Build (PyInstaller, onedir)
+      - name: Build EXE (PyInstaller, onefile)
         run: >
-          pyinstaller --noconfirm --clean --onedir --windowed
+          pyinstaller --noconfirm --clean --onefile --windowed
           --name "JaziraPOS"
           --icon "logo.ico"
           --add-data "config.example.json;."
@@ -53,19 +53,15 @@ jobs:
           --collect-submodules "engineio"
           main.py
 
-      - name: Zip build folder
-        shell: pwsh
-        run: Compress-Archive -Path dist/JaziraPOS/* -DestinationPath dist/JaziraPOS.zip -Force
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: JaziraPOS
-          path: dist/JaziraPOS.zip
+          path: dist/JaziraPOS.exe
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/JaziraPOS.zip
+          files: dist/JaziraPOS.exe
           generate_release_notes: true

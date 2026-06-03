@@ -1197,14 +1197,14 @@ class MainWindow(QMainWindow):
     def _on_update_progress(self, percent: int):
         self.status_label.setText(f"Yangilanish yuklanmoqda... {percent}%")
 
-    def _on_update_downloaded(self, src_dir: str):
+    def _on_update_downloaded(self, new_exe_path: str):
         InfoDialog(
             self, "Yangilanishga tayyor",
             "Yangi versiya yuklandi. Ilova hozir qayta ishga tushadi.",
             kind="success",
         ).exec()
         try:
-            updater.apply_update_and_restart(src_dir)
+            updater.apply_update_and_restart(new_exe_path)
         except Exception as e:
             logger.error("Update qo'llash xatosi: %s", e)
             InfoDialog(

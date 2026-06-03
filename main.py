@@ -43,12 +43,12 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(get_global_style())
 
-    # Oldingi yangilanishdan qolgan temp papkalarni tozalash
+    # Oldingi yangilanishdan qolgan .old.exe ni tozalash
     try:
-        from core.updater import cleanup_temp_updates
-        cleanup_temp_updates()
+        from core.updater import cleanup_old_exe
+        cleanup_old_exe()
     except Exception as e:
-        logger.error("Temp update tozalash xatosi: %s", e)
+        logger.error("Eski .exe tozalash xatosi: %s", e)
 
     # Bitta shared API instance yaratamiz
     shared_api = FrappeAPI()
