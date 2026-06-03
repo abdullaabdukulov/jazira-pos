@@ -1,0 +1,57 @@
+name: Build Windows EXE
+
+# v1.0.0 kabi tag push qilinganda ishga tushadi
+on:
+  push:
+    tags:
+      - "v*"
+  # Qo'lda ham ishga tushirish mumkin (Actions sahifasidagi "Run workflow" tugmasi)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # Release yaratish uchun kerak
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build EXE (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name "JaziraPOS"
+          --icon "logo.ico"
+          --add-data "config.example.json;."
+          --hidden-import "PyQt6.QtCore"
+          --hidden-import "PyQt6.QtGui"
+          --hidden-import "PyQt6.QtWidgets"
+          --hidden-import "peewee"
+          --hidden-import "socketio"
+          --hidden-import "engineio"
+          --collect-submodules "socketio"
+          --collect-submodules "engineio"
+          main.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JaziraPOS
+          path: dist/JaziraPOS.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/JaziraPOS.exe
+          generate_release_notes: true
